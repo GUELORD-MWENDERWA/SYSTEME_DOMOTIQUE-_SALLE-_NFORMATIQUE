@@ -1,0 +1,41 @@
+# Build directories
+.pio/
+.pioenvs/
+.piolibdeps/
+build/
+dist/
+
+# IDE files
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Object files
+*.o
+*.a
+*.so
+*.elf
+*.hex
+*.bin
+
+# Dependency directories
+lib/
+
+# PlatformIO specific
+.clang_complete
+c_cpp_properties.json
+launch.json
+ipch/
+
+# OS files
+Thumbs.db
+.AppleDouble
+
+# Editor temporary files
+*.bak
+*.tmp
