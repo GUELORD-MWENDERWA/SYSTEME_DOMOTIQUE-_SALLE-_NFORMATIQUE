@@ -343,10 +343,42 @@ void WebServerManager::handleCommand(AsyncWebServerRequest* request, String cmd)
     else if (cmd == "REBOOT") {
         doc["status"] = "ok";
         doc["message"] = "Rebooting...";
-        request->send(200, "application/json");
+        String response;
+        serializeJson(doc, response);
+        request->send(200, "application/json", response);
         delay(1000);
         ESP.restart();
         return;
+    }
+    else if (cmd == "MODE_ACCESS") {
+        systemLogic->setSystemMode(MODE_ACCESS);
+        doc["status"] = "ok";
+        doc["message"] = "Mode ACCESS active";
+    }
+    else if (cmd == "MODE_REG") {
+        systemLogic->setSystemMode(MODE_REGISTRATION);
+        doc["status"] = "ok";
+        doc["message"] = "Mode REGISTRATION active";
+    }
+    else if (cmd == "DAYMODE") {
+        systemStatus->daynight = STATUS_DAY;
+        doc["status"] = "ok";
+        doc["message"] = "Mode JOUR active";
+    }
+    else if (cmd == "NIGHTMODE") {
+        systemStatus->daynight = STATUS_NIGHT;
+        doc["status"] = "ok";
+        doc["message"] = "Mode NUIT active";
+    }
+    else if (cmd == "ALARM_ON") {
+        systemStatus->intrusion_detected = true;
+        doc["status"] = "ok";
+        doc["message"] = "Alarme activee";
+    }
+    else if (cmd == "ALARM_OFF") {
+        systemStatus->intrusion_detected = false;
+        doc["status"] = "ok";
+        doc["message"] = "Alarme desactivee";
     }
     else {
         doc["status"] = "error";

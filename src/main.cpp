@@ -138,51 +138,39 @@ void setup() {
     WiFi.setTxPower(WIFI_POWER_19_5dBm);
     WiFi.setSleep(false);
     
-    // Load WiFi credentials with emergency fallback
-    String wifiSSID = storageManager.readString(EEPROM_ADDR_SSID, 32);
-    String wifiPass = storageManager.readString(EEPROM_ADDR_PASSWORD, 64);
+    // SIMPLE AND RELIABLE: Use hardcoded defaults
+    const char* wifiSSID = "702SH_AP";
+    const char* wifiPass = "12345678___1";
     
-    if (wifiSSID.length() == 0 || wifiSSID == "" || wifiSSID[0] == 0xFF) {
-        wifiSSID = WIFI_DEFAULT_SSID;
-        wifiPass = WIFI_DEFAULT_PASSWORD;
-        Serial.println("[WIFI] Using hardcoded defaults");
-    }
-    
-    Serial.print("[WIFI] SSID: ");
+    Serial.print("[WIFI] Connecting to: ");
     Serial.println(wifiSSID);
     
+    WiFi.begin(wifiSSID, wifiPass);
+    
     bool wifiConnected = false;
-    if (wifiSSID.length() > 0 && wifiSSID.length() <= 32) {
-        Serial.println("[WIFI] Connecting...");
-        WiFi.begin(wifiSSID.c_str(), wifiPass.c_str());
-        
-        uint32_t wifiStart = millis();
-        int attempts = 0;
-        while (attempts < 80) { // 80 × 100ms = 8 sec
-            if (WiFi.status() == WL_CONNECTED) {
-                wifiConnected = true;
-                break;
-            }
-            delay(100);
-            attempts++;
-            if (attempts % 10 == 0) Serial.print(".");
+    uint32_t wifiStart = millis();
+    
+    // Try for 10 seconds
+    while ((millis() - wifiStart) < 10000) {
+        if (WiFi.status() == WL_CONNECTED) {
+            wifiConnected = true;
+            break;
         }
-        
-        if (wifiConnected) {
-            Serial.println("");
-            Serial.print("[WIFI] ✓ Connected (");
-            Serial.print(attempts * 100);
-            Serial.print("ms) - IP: ");
-            Serial.println(WiFi.localIP());
-        } else {
-            Serial.println("");
-            Serial.println("[WIFI] ✗ Connection timeout");
-        }
+        Serial.print(".");
+        delay(500);
     }
     
-    // Fallback to AP if no connection
-    if (!wifiConnected) {
-        Serial.println("[WIFI] Starting AP mode...");
+    if (wifiConnected) {
+        Serial.println("");
+        Serial.print("[WIFI] ✓ Connected in ");
+        Serial.print(millis() - wifiStart);
+        Serial.print("ms | IP: ");
+        Serial.println(WiFi.localIP());
+    } else {
+        Serial.println("");
+        Serial.println("[WIFI] ✗ Connection timeout - starting AP mode");
+        
+        // Fallback to AP
         WiFi.mode(WIFI_AP);
         WiFi.softAP("Domotique_Setup", "domotique2024");
         Serial.print("[WIFI] AP IP: ");

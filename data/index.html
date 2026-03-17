@@ -1,263 +1,273 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="fr">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Domotique - Dashboard</title>
-    <link rel="stylesheet" href="style.css">
-</head>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@3.9.1/dist/chart.min.js"></script>
+    <link rel="stylesheet" href="style.css" />
+  </head>
   <body>
-    <div class="app-container">
-        <!-- Sidebar -->
-        <aside class="sidebar">
-            <div class="sidebar-header">
-                <h2>🏠</h2>
-                <button class="theme-toggle" id="themeBtn" title="Changer Thème">🌙</button>
+    <div class="container">
+      <!-- Sidebar Left - NAVIGATION -->
+      <aside class="sidebar-left">
+        <div class="logo">🏠</div>
+        <button class="theme-btn" id="themeBtn">🌙</button>
+        <div id="apiStatus" class="api-disconnected">❌ API Err</div>
+        <nav class="nav-menu">
+          <button class="nav-btn active" data-page="dashboard">
+            📊 Dashboard
+          </button>
+          <button class="nav-btn" data-page="charts">📈 Graphiques</button>
+          <button class="nav-btn" data-page="relays">⚙️ Relais</button>
+          <button class="nav-btn" data-page="rfid">🔐 RFID</button>
+          <button class="nav-btn" data-page="commands">💻 Commandes</button>
+        </nav>
+      </aside>
+
+      <!-- Main Content -->
+      <main class="main-content">
+        <!-- Header -->
+        <header class="header">
+          <h1 id="pageTitle">📊 Dashboard</h1>
+          <div
+            id="errorMessage"
+            class="error-message"
+            style="display: none"
+          ></div>
+        </header>
+
+        <!-- Pages Container -->
+        <div class="content">
+          <!-- Dashboard Page -->
+          <div id="dashboard" class="page active">
+            <div class="card-row">
+              <div class="card small">
+                <h3>📊 Système</h3>
+                <div class="stat-row">
+                  <span>Mode:</span><span id="sysMode" class="value">--</span>
+                </div>
+                <div class="stat-row">
+                  <span>Jour/Nuit:</span
+                  ><span id="sysDayNight" class="value">--</span>
+                </div>
+              </div>
+              <div class="card small">
+                <h3>⚡ Énergie</h3>
+                <div class="stat-row">
+                  <span>Tension:</span
+                  ><span id="dashVolt" class="value">--V</span>
+                </div>
+                <div class="stat-row">
+                  <span>Courant:</span
+                  ><span id="dashAmp" class="value">--A</span>
+                </div>
+              </div>
+              <div class="card small">
+                <h3>📈 Données</h3>
+                <div class="stat-row">
+                  <span>Entrées:</span
+                  ><span id="dashEntries" class="value">0</span>
+                </div>
+                <div class="stat-row">
+                  <span>Sorties:</span
+                  ><span id="dashExits" class="value">0</span>
+                </div>
+              </div>
             </div>
-            <nav class="nav-menu">
-                <button class="nav-btn active" data-page="dashboard">📊 Dashboard</button>
-                <button class="nav-btn" data-page="relays">⚙️ Relais</button>
-                <button class="nav-btn" data-page="energy">⚡ Énergie</button>
-                <button class="nav-btn" data-page="rfid">🔐 RFID</button>
-                <button class="nav-btn" data-page="commands">💻 Commandes</button>
-            </nav>
-        </aside>
 
-        <!-- Main Content -->
-        <main class="main-container">
-            <!-- Header -->
-            <header class="top-header">
-                <h1 id="pageTitle">📊 Dashboard</h1>
-                <div class="header-status">
-                    <span class="status-badge" id="timeBadge">--:--:--</span>
-                    <span class="status-badge" id="modeBadge">--</span>
-                    <span class="status-badge" id="dayNightBadge">--</span>
-                </div>
-            </header>
-
-            <!-- Content Area -->
-            <div class="content-area">
-                <!-- Dashboard Page -->
-                <div id="dashboard-page" class="page-content active">
-                    <div class="grid-row">
-                        <!-- Energy Card -->
-                        <div class="card energy-card">
-                            <h3>⚡ Énergie</h3>
-                            <div class="metrics-grid">
-                                <div class="metric">
-                                    <span class="metric-label">Tension</span>
-                                    <span class="metric-value" id="voltage">0.0V</span>
-                                </div>
-                                <div class="metric">
-                                    <span class="metric-label">Courant</span>
-                                    <span class="metric-value" id="current">0.00A</span>
-                                </div>
-                                <div class="metric">
-                                    <span class="metric-label">Puissance</span>
-                                    <span class="metric-value" id="power">0W</span>
-                                </div>
-                                <div class="metric">
-                                    <span class="metric-label">Fréquence</span>
-                                    <span class="metric-value" id="frequency">0Hz</span>
-                                </div>
-                            </div>
-                        </div>
-
-                        <!-- Status Card -->
-                        <div class="card status-card">
-                            <h3>📊 Système</h3>
-                            <div class="status-items">
-                                <div class="status-row">
-                                    <span>Présence:</span>
-                                    <span id="presence">0</span>
-                                </div>
-                                <div class="status-row">
-                                    <span>Entrées:</span>
-                                    <span id="entries">0</span>
-                                </div>
-                                <div class="status-row">
-                                    <span>Sorties:</span>
-                                    <span id="exits">0</span>
-                                </div>
-                                <div class="status-row">
-                                    <span>Alarme:</span>
-                                    <span id="alarm" style="color: #ff6b6b;">OFF</span>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-
-                    <!-- Chart -->
-                    <div class="card full-width">
-                        <h3>📈 Graphique Énergie</h3>
-                        <canvas id="energyChart" height="80"></canvas>
-                    </div>
-
-                    <!-- Quick Control -->
-                    <div class="card full-width">
-                        <h3>⚙️ Contrôle Rapide</h3>
-                        <div class="relay-quick-grid">
-                            <button class="relay-quick-btn" data-relay="0">💡</button>
-                            <button class="relay-quick-btn" data-relay="1">🌙</button>
-                            <button class="relay-quick-btn" data-relay="2">🔌</button>
-                            <button class="relay-quick-btn" data-relay="3">🔌</button>
-                            <button class="relay-quick-btn" data-relay="4">💨</button>
-                            <button class="relay-quick-btn" data-relay="5">🔊</button>
-                            <button class="relay-quick-btn" data-relay="6">🔴</button>
-                            <button class="relay-quick-btn" data-relay="7">🟢</button>
-                        </div>
-                    </div>
-                </div>
-
-                <!-- Relays Page -->
-                <div id="relays-page" class="page-content">
-                    <div class="relay-grid">
-                        <div class="relay-card" data-relay="0">
-                            <div class="relay-emoji">💡</div>
-                            <h4>Lampe Intérieure</h4>
-                            <p>Q0</p>
-                            <button class="btn-toggle-relay" data-relay="0">OFF</button>
-                        </div>
-                        <div class="relay-card" data-relay="1">
-                            <div class="relay-emoji">🌙</div>
-                            <h4>Lampe Extérieure</h4>
-                            <p>Q1</p>
-                            <button class="btn-toggle-relay" data-relay="1">OFF</button>
-                        </div>
-                        <div class="relay-card" data-relay="2">
-                            <div class="relay-emoji">🔌</div>
-                            <h4>Prise 1</h4>
-                            <p>Q2</p>
-                            <button class="btn-toggle-relay" data-relay="2">OFF</button>
-                        </div>
-                        <div class="relay-card" data-relay="3">
-                            <div class="relay-emoji">🔌</div>
-                            <h4>Prise 2</h4>
-                            <p>Q3</p>
-                            <button class="btn-toggle-relay" data-relay="3">OFF</button>
-                        </div>
-                        <div class="relay-card" data-relay="4">
-                            <div class="relay-emoji">💨</div>
-                            <h4>Ventilateur</h4>
-                            <p>Q4</p>
-                            <button class="btn-toggle-relay" data-relay="4">OFF</button>
-                        </div>
-                        <div class="relay-card" data-relay="5">
-                            <div class="relay-emoji">🔊</div>
-                            <h4>Buzzer</h4>
-                            <p>Q5</p>
-                            <button class="btn-toggle-relay" data-relay="5">OFF</button>
-                        </div>
-                        <div class="relay-card" data-relay="6">
-                            <div class="relay-emoji">🔴</div>
-                            <h4>LED Rouge</h4>
-                            <p>Q6</p>
-                            <button class="btn-toggle-relay" data-relay="6">OFF</button>
-                        </div>
-                        <div class="relay-card" data-relay="7">
-                            <div class="relay-emoji">🟢</div>
-                            <h4>LED Verte</h4>
-                            <p>Q7</p>
-                            <button class="btn-toggle-relay" data-relay="7">OFF</button>
-                        </div>
-                    </div>
-                </div>
-
-                <!-- Energy Page -->
-                <div id="energy-page" class="page-content">
-                    <div class="card">
-                        <h3>⚡ Détails Énergie</h3>
-                        <div class="energy-details">
-                            <div class="detail-item">
-                                <label>Tension (V)</label>
-                                <div class="detail-value-bar">
-                                    <span id="voltage2">0.0</span>
-                                    <div class="progress-bar">
-                                        <div class="progress-fill" id="voltageBar"></div>
-                                    </div>
-                                </div>
-                            </div>
-                            <div class="detail-item">
-                                <label>Courant (A)</label>
-                                <div class="detail-value-bar">
-                                    <span id="current2">0.00</span>
-                                    <div class="progress-bar">
-                                        <div class="progress-fill" id="currentBar"></div>
-                                    </div>
-                                </div>
-                            </div>
-                            <div class="detail-item">
-                                <label>Puissance (W)</label>
-                                <div class="detail-value-bar">
-                                    <span id="power2">0</span>
-                                    <div class="progress-bar">
-                                        <div class="progress-fill" id="powerBar"></div>
-                                    </div>
-                                </div>
-                            </div>
-                            <div class="detail-item">
-                                <label>Fréquence (Hz)</label>
-                                <span id="frequency2">0</span>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-
-                <!-- RFID Page -->
-                <div id="rfid-page" class="page-content">
-                    <div class="card">
-                        <h3>🔐 Gestion Cartes RFID</h3>
-                        
-                        <div class="rfid-form">
-                            <h4>Enregistrer une nouvelle carte</h4>
-                            <form id="rfidForm">
-                                <input type="text" id="uidInput" placeholder="UID (hex)" required>
-                                <input type="text" id="nameInput" placeholder="Nom" required>
-                                <select id="accessInput">
-                                    <option value="1">✓ Autorisé</option>
-                                    <option value="0">✗ Refusé</option>
-                                </select>
-                                <button type="submit" class="btn-primary">+ Ajouter</button>
-                            </form>
-                        </div>
-
-                        <div class="rfid-list">
-                            <h4>Cartes enregistrées</h4>
-                            <table id="rfidTable">
-                                <thead>
-                                    <tr>
-                                        <th>UID</th>
-                                        <th>Nom</th>
-                                        <th>Accès</th>
-                                        <th>Intérieur</th>
-                                        <th>Actions</th>
-                                    </tr>
-                                </thead>
-                                <tbody id="rfidBody">
-                                    <tr><td colspan="5" style="text-align:center;">Chargement...</td></tr>
-                                </tbody>
-                            </table>
-                        </div>
-                    </div>
-                </div>
-
-                <!-- Commands Page -->
-                <div id="commands-page" class="page-content">
-                    <div class="card">
-                        <h3>💻 Commandes Système</h3>
-                        <div class="commands-buttons">
-                            <button class="btn-cmd btn-cmd-zero" data-cmd="ZERO">🔄 ZERO</button>
-                            <button class="btn-cmd btn-cmd-reset" data-cmd="RESET">🔔 RESET</button>
-                            <button class="btn-cmd btn-cmd-relay" data-cmd="RELAY">📋 RELAY</button>
-                            <button class="btn-cmd btn-cmd-reboot" data-cmd="REBOOT">🔌 REBOOT</button>
-                        </div>
-                    </div>
-                </div>
+            <div class="card full">
+              <h3>⚙️ Relais Rapides</h3>
+              <div class="relay-grid-quick">
+                <button
+                  class="relay-btn-quick"
+                  data-relay="0"
+                  title="Lampe Intérieure"
+                >
+                  💡
+                </button>
+                <button
+                  class="relay-btn-quick"
+                  data-relay="1"
+                  title="Lampe Extérieure"
+                >
+                  🌙
+                </button>
+                <button class="relay-btn-quick" data-relay="2" title="Prise 1">
+                  🔌
+                </button>
+                <button class="relay-btn-quick" data-relay="3" title="Prise 2">
+                  🔌
+                </button>
+                <button
+                  class="relay-btn-quick"
+                  data-relay="4"
+                  title="Ventilateur"
+                >
+                  💨
+                </button>
+                <button class="relay-btn-quick" data-relay="5" title="Buzzer">
+                  🔊
+                </button>
+                <button
+                  class="relay-btn-quick"
+                  data-relay="6"
+                  title="LED Rouge"
+                >
+                  🔴
+                </button>
+                <button
+                  class="relay-btn-quick"
+                  data-relay="7"
+                  title="LED Verte"
+                >
+                  🟢
+                </button>
+              </div>
             </div>
-        </main>
+          </div>
+
+          <!-- Charts Page -->
+          <div id="charts" class="page">
+            <div class="charts-container">
+              <div class="chart-wrapper">
+                <h3>⚡ Tension (V)</h3>
+                <canvas id="voltageChart" width="400" height="200"></canvas>
+              </div>
+              <div class="chart-wrapper">
+                <h3>🔌 Courant (A)</h3>
+                <canvas id="currentChart" width="400" height="200"></canvas>
+              </div>
+              <div class="chart-wrapper">
+                <h3>💡 Puissance (W)</h3>
+                <canvas id="powerChart" width="400" height="200"></canvas>
+              </div>
+              <div class="chart-wrapper full">
+                <h3>📊 Vue Complète</h3>
+                <canvas id="fullChart" width="800" height="200"></canvas>
+              </div>
+            </div>
+          </div>
+
+          <!-- Relays Page -->
+          <div id="relays" class="page">
+            <div class="relay-grid">
+              <div class="relay-card">
+                <div class="emoji">💡</div>
+                <h4>Lampe IN</h4>
+                <button class="btn-toggle" data-id="0">OFF</button>
+              </div>
+              <div class="relay-card">
+                <div class="emoji">🌙</div>
+                <h4>Lampe OUT</h4>
+                <button class="btn-toggle" data-id="1">OFF</button>
+              </div>
+              <div class="relay-card">
+                <div class="emoji">🔌</div>
+                <h4>Prise 1</h4>
+                <button class="btn-toggle" data-id="2">OFF</button>
+              </div>
+              <div class="relay-card">
+                <div class="emoji">🔌</div>
+                <h4>Prise 2</h4>
+                <button class="btn-toggle" data-id="3">OFF</button>
+              </div>
+              <div class="relay-card">
+                <div class="emoji">💨</div>
+                <h4>Ventilateur</h4>
+                <button class="btn-toggle" data-id="4">OFF</button>
+              </div>
+              <div class="relay-card">
+                <div class="emoji">🔊</div>
+                <h4>Buzzer</h4>
+                <button class="btn-toggle" data-id="5">OFF</button>
+              </div>
+              <div class="relay-card">
+                <div class="emoji">🔴</div>
+                <h4>LED Rouge</h4>
+                <button class="btn-toggle" data-id="6">OFF</button>
+              </div>
+              <div class="relay-card">
+                <div class="emoji">🟢</div>
+                <h4>LED Verte</h4>
+                <button class="btn-toggle" data-id="7">OFF</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- RFID Page -->
+          <div id="rfid" class="page">
+            <div class="card full">
+              <h3>🔐 Gestion RFID</h3>
+              
+              <!-- Add/Edit Form -->
+              <div style="background: var(--color-bg); padding: 15px; border-radius: 8px; margin-bottom: 20px;">
+                <h4 style="margin-bottom: 10px;">➕ Ajouter/Modifier Carte</h4>
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 15px;">
+                  <input type="text" id="rfidUid" placeholder="UID (ex: 0x12345678)" style="padding: 8px; border: 1px solid var(--color-border); border-radius: 6px; background: var(--color-card); color: var(--color-text);" />
+                  <input type="text" id="rfidName" placeholder="Nom" style="padding: 8px; border: 1px solid var(--color-border); border-radius: 6px; background: var(--color-card); color: var(--color-text);" />
+                </div>
+                <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px;">
+                  <button onclick="addRFID()" style="padding: 8px; background: #4caf50; color: white; border: none; border-radius: 6px; cursor: pointer; font-weight: bold;">✅ Ajouter</button>
+                  <button onclick="clearRFIDForm()" style="padding: 8px; background: #999; color: white; border: none; border-radius: 6px; cursor: pointer;">🗑️ Effacer</button>
+                  <button onclick="authorizeRFID()" style="padding: 8px; background: #ff9800; color: white; border: none; border-radius: 6px; cursor: pointer;">✓ Autoriser</button>
+                  <button onclick="unauthorizeRFID()" style="padding: 8px; background: #f44336; color: white; border: none; border-radius: 6px; cursor: pointer;">✕ Refuser</button>
+                </div>
+              </div>
+
+              <!-- RFID List -->
+              <h4>📋 Cartes Enregistrées</h4>
+              <div id="rfidList" class="rfid-list">Chargement...</div>
+            </div>
+          </div>
+
+          <!-- Commands Page -->
+          <div id="commands" class="page">
+            <div class="commands-grid">
+              <button class="cmd-btn" data-cmd="ZERO">🔄 Reset Complet</button>
+              <button class="cmd-btn" data-cmd="RESET">
+                📊 Reset Compteurs
+              </button>
+              <button class="cmd-btn" data-cmd="REBOOT">🔌 Redémarrer</button>
+              <button class="cmd-btn" data-cmd="MODE_ACCESS">
+                🚪 Mode ACCESS
+              </button>
+              <button class="cmd-btn" data-cmd="MODE_REG">📝 Mode REG</button>
+              <button class="cmd-btn" data-cmd="DAYMODE">☀️ Jour</button>
+              <button class="cmd-btn" data-cmd="NIGHTMODE">🌙 Nuit</button>
+              <button class="cmd-btn" data-cmd="ALARM_ON">🚨 Alarme ON</button>
+              <button class="cmd-btn" data-cmd="ALARM_OFF">
+                ✅ Alarme OFF
+              </button>
+            </div>
+          </div>
+        </div>
+      </main>
+
+      <!-- Sidebar Right (Footer) -->
+      <aside class="sidebar-right">
+        <div class="footer-box">
+          <div class="footer-title">🕐 Info</div>
+          <div id="footerTime" class="footer-text">--:--:--</div>
+        </div>
+        <div class="footer-box">
+          <div class="footer-title">⏱️ Statut</div>
+          <div id="footerStatus" class="footer-text">Démarrage...</div>
+        </div>
+        <div class="footer-divider"></div>
+        <div class="footer-box footer-info">
+          <div>Système Domotique v1.0</div>
+          <div>© 2026</div>
+          <div
+            id="lastUpdate"
+            style="font-size: 12px; margin-top: 5px; opacity: 0.7"
+          >
+            --:--:--
+          </div>
+        </div>
+      </aside>
     </div>
 
-    <script src="https://cdn.jsdelivr.net/npm/chart.js@3.9.1/dist/chart.min.js"></script>
     <script src="app.js"></script>
   </body>
 </html>

@@ -1,0 +1,698 @@
+// ===== CONFIGURATION =====
+const UPDATE_INTERVAL = 500; // 500ms - mise à jour toutes les 0.5s
+const CHART_POINTS = 60; // 60 points = 30 secondes de données
+const API_BASE = "/api"; // Use relative path (same host)
+
+// ===== STATE =====
+let systemData = null;
+let chartData = {
+  labels: Array(CHART_POINTS)
+    .fill(0)
+    .map((_, i) => i),
+  voltage: Array(CHART_POINTS).fill(0),
+  current: Array(CHART_POINTS).fill(0),
+  power: Array(CHART_POINTS).fill(0),
+};
+let charts = {};
+let relayStates = [false, false, false, false, false, false, false, false];
+let updating = false;
+let apiConnected = false;
+
+// ===== INITIALIZE =====
+window.addEventListener("load", () => {
+  console.log("🟢 Page loaded - Initializing app...");
+  try {
+    initTheme();
+    console.log("✓ Theme initialized");
+    initNavigation();
+    console.log("✓ Navigation initialized");
+    initCharts();
+    console.log("✓ Charts initialized");
+    initRelays();
+    console.log("✓ Relays initialized");
+    startUpdates();
+    console.log("✓ Updates started");
+  } catch (e) {
+    console.error("❌ Initialization error:", e);
+    showError("Erreur d'initialisation");
+  }
+});
+
+// ===== THEME =====
+function initTheme() {
+  const saved = localStorage.getItem("theme") || "light";
+  setTheme(saved);
+  const btn = document.getElementById("themeBtn");
+  if (btn) btn.addEventListener("click", toggleTheme);
+}
+
+function setTheme(theme) {
+  document.documentElement.setAttribute("data-theme", theme);
+  localStorage.setItem("theme", theme);
+  const btn = document.getElementById("themeBtn");
+  if (btn) btn.textContent = theme === "dark" ? "☀️" : "🌙";
+}
+
+function toggleTheme() {
+  const current =
+    document.documentElement.getAttribute("data-theme") || "light";
+  setTheme(current === "light" ? "dark" : "light");
+}
+
+// ===== NAVIGATION =====
+function initNavigation() {
+  document.querySelectorAll(".nav-btn").forEach((btn) => {
+    btn.addEventListener("click", (e) => {
+      const page = e.target.getAttribute("data-page");
+      showPage(page);
+      document
+        .querySelectorAll(".nav-btn")
+        .forEach((b) => b.classList.remove("active"));
+      e.target.classList.add("active");
+    });
+  });
+}
+
+function showPage(pageName) {
+  const pages = document.querySelectorAll(".page");
+  pages.forEach((p) => {
+    p.classList.remove("active");
+    p.style.display = "none";
+  });
+  const page = document.getElementById(pageName);
+  if (page) {
+    page.classList.add("active");
+    page.style.display = "block";
+  }
+
+  const titles = {
+    dashboard: "📊 Dashboard",
+    charts: "📈 Graphiques",
+    relays: "⚙️ Relais",
+    rfid: "🔐 RFID",
+    commands: "💻 Commandes",
+  };
+  const titleEl = document.getElementById("pageTitle");
+  if (titleEl) titleEl.textContent = titles[pageName] || "Page";
+
+  // Load RFID list when navigating to RFID page
+  if (pageName === "rfid") {
+    loadRFID();
+  }
+}
+
+// ===== CHARTS =====
+function initCharts() {
+  const colors = {
+    voltage: "#FF6B6B",
+    current: "#4ECDC4",
+    power: "#FFE66D",
+    voltage2: "#FFB3BA",
+    current2: "#77E7D8",
+    power2: "#FFEB99",
+  };
+
+  const commonOptions = {
+    responsive: true,
+    maintainAspectRatio: false,
+    plugins: {
+      legend: { display: false },
+      filler: { propagate: true },
+    },
+    animation: { duration: 0 },
+    parsing: false,
+    normalized: true,
+  };
+
+  // Voltage Chart
+  const voltageEl = document.getElementById("voltageChart");
+  if (voltageEl) {
+    charts.voltage = new Chart(voltageEl, {
+      type: "line",
+      data: {
+        labels: chartData.labels,
+        datasets: [
+          {
+            label: "Tension (V)",
+            data: chartData.voltage,
+            borderColor: colors.voltage,
+            backgroundColor: colors.voltage2,
+            tension: 0.4,
+            fill: true,
+            pointRadius: 0,
+            borderWidth: 2,
+          },
+        ],
+      },
+      options: {
+        ...commonOptions,
+        scales: { y: { beginAtZero: true, max: 260 } },
+      },
+    });
+  }
+
+  // Current Chart
+  const currentEl = document.getElementById("currentChart");
+  if (currentEl) {
+    charts.current = new Chart(currentEl, {
+      type: "line",
+      data: {
+        labels: chartData.labels,
+        datasets: [
+          {
+            label: "Courant (A)",
+            data: chartData.current,
+            borderColor: colors.current,
+            backgroundColor: colors.current2,
+            tension: 0.4,
+            fill: true,
+            pointRadius: 0,
+            borderWidth: 2,
+          },
+        ],
+      },
+      options: {
+        ...commonOptions,
+        scales: { y: { beginAtZero: true } },
+      },
+    });
+  }
+
+  // Power Chart
+  const powerEl = document.getElementById("powerChart");
+  if (powerEl) {
+    charts.power = new Chart(powerEl, {
+      type: "line",
+      data: {
+        labels: chartData.labels,
+        datasets: [
+          {
+            label: "Puissance (W)",
+            data: chartData.power,
+            borderColor: colors.power,
+            backgroundColor: colors.power2,
+            tension: 0.4,
+            fill: true,
+            pointRadius: 0,
+            borderWidth: 2,
+          },
+        ],
+      },
+      options: {
+        ...commonOptions,
+        scales: { y: { beginAtZero: true } },
+      },
+    });
+  }
+
+  // Overview Chart
+  const overviewEl = document.getElementById("overviewChart");
+  if (overviewEl) {
+    charts.overview = new Chart(overviewEl, {
+      type: "line",
+      data: {
+        labels: chartData.labels,
+        datasets: [
+          {
+            label: "V",
+            data: chartData.voltage,
+            borderColor: colors.voltage,
+            fill: false,
+            pointRadius: 0,
+            borderWidth: 2,
+          },
+          {
+            label: "A",
+            data: chartData.current,
+            borderColor: colors.current,
+            fill: false,
+            pointRadius: 0,
+            borderWidth: 2,
+          },
+          {
+            label: "W",
+            data: chartData.power,
+            borderColor: colors.power,
+            fill: false,
+            pointRadius: 0,
+            borderWidth: 2,
+          },
+        ],
+      },
+      options: {
+        ...commonOptions,
+        plugins: { legend: { display: true } },
+        scales: { y: { beginAtZero: true } },
+      },
+    });
+  }
+
+  // Full Chart
+  const fullEl = document.getElementById("fullChart");
+  if (fullEl) {
+    charts.full = new Chart(fullEl, {
+      type: "line",
+      data: {
+        labels: chartData.labels,
+        datasets: [
+          {
+            label: "Tension (V)",
+            data: chartData.voltage,
+            borderColor: colors.voltage,
+            fill: false,
+            pointRadius: 0,
+            borderWidth: 2,
+          },
+          {
+            label: "Courant (A)",
+            data: chartData.current,
+            borderColor: colors.current,
+            fill: false,
+            pointRadius: 0,
+            borderWidth: 2,
+          },
+          {
+            label: "Puissance (W)",
+            data: chartData.power,
+            borderColor: colors.power,
+            fill: false,
+            pointRadius: 0,
+            borderWidth: 2,
+          },
+        ],
+      },
+      options: {
+        ...commonOptions,
+        plugins: { legend: { display: true } },
+        scales: { y: { beginAtZero: true } },
+      },
+    });
+  }
+}
+
+// ===== DATA UPDATES =====
+function startUpdates() {
+  updateData(); // First update immediately
+  setInterval(updateData, UPDATE_INTERVAL);
+  setInterval(updateTime, 1000); // Update time every second
+}
+
+async function updateData() {
+  if (updating) return;
+  updating = true;
+
+  try {
+    console.log(`🔄 Fetching ${API_BASE}/system`);
+    const response = await fetch(`${API_BASE}/system`);
+
+    console.log(`📊 Response: status=${response.status}, ok=${response.ok}`);
+
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
+    }
+
+    const text = await response.text();
+    console.log(`📦 Raw response: ${text.substring(0, 200)}...`);
+
+    if (!text || text.length === 0) {
+      throw new Error("Réponse vide du serveur");
+    }
+
+    systemData = JSON.parse(text);
+    console.log("✓ JSON parsed:", systemData);
+
+    setApiStatus(true);
+    updateUI();
+    updateCharts();
+  } catch (error) {
+    console.error("❌ Update error:", error.message);
+    setApiStatus(false);
+    showError(`API Error: ${error.message}`);
+  } finally {
+    updating = false;
+  }
+}
+
+function updateUI() {
+  if (!systemData) {
+    console.warn("⚠️ systemData is null, skipping UI update");
+    return;
+  }
+
+  try {
+    // Dashboard
+    const sysMode = document.getElementById("sysMode");
+    if (sysMode)
+      sysMode.textContent = systemData.current_mode === 0 ? "ACCESS" : "REG";
+
+    const sysDayNight = document.getElementById("sysDayNight");
+    if (sysDayNight)
+      sysDayNight.textContent =
+        systemData.daynight === 0 ? "☀️ Jour" : "🌙 Nuit";
+
+    const dashVolt = document.getElementById("dashVolt");
+    if (dashVolt)
+      dashVolt.textContent = (systemData.voltage || 0).toFixed(1) + "V";
+
+    const dashAmp = document.getElementById("dashAmp");
+    if (dashAmp)
+      dashAmp.textContent = (systemData.current || 0).toFixed(2) + "A";
+
+    const dashEntries = document.getElementById("dashEntries");
+    if (dashEntries) dashEntries.textContent = systemData.entries_count || 0;
+
+    const dashExits = document.getElementById("dashExits");
+    if (dashExits) dashExits.textContent = systemData.exits_count || 0;
+
+    // Relays
+    if (Array.isArray(systemData.relays)) {
+      relayStates = systemData.relays;
+      updateRelayDisplay();
+    }
+
+    // Footer
+    const footerTime = document.getElementById("footerTime");
+    if (footerTime)
+      footerTime.textContent = new Date().toLocaleTimeString("fr-FR");
+
+    const footerStatus = document.getElementById("footerStatus");
+    if (footerStatus)
+      footerStatus.textContent = systemData.intrusion_detected
+        ? "🚨 ALARME!"
+        : "✅ OK";
+
+    const lastUpdate = document.getElementById("lastUpdate");
+    if (lastUpdate)
+      lastUpdate.textContent = new Date().toLocaleTimeString("fr-FR");
+  } catch (error) {
+    console.error("❌ UI update error:", error);
+  }
+}
+
+function updateCharts() {
+  if (!systemData) return;
+
+  try {
+    // Shift data and add new value
+    chartData.voltage.shift();
+    chartData.voltage.push(systemData.voltage || 0);
+
+    chartData.current.shift();
+    chartData.current.push(systemData.current || 0);
+
+    chartData.power.shift();
+    chartData.power.push(systemData.power || 0);
+
+    // Update all charts
+    if (charts.voltage) {
+      charts.voltage.data.datasets[0].data = [...chartData.voltage];
+      charts.voltage.update("none");
+    }
+    if (charts.current) {
+      charts.current.data.datasets[0].data = [...chartData.current];
+      charts.current.update("none");
+    }
+    if (charts.power) {
+      charts.power.data.datasets[0].data = [...chartData.power];
+      charts.power.update("none");
+    }
+    if (charts.overview) {
+      charts.overview.data.datasets[0].data = [...chartData.voltage];
+      charts.overview.data.datasets[1].data = [...chartData.current];
+      charts.overview.data.datasets[2].data = [...chartData.power];
+      charts.overview.update("none");
+    }
+    if (charts.full) {
+      charts.full.data.datasets[0].data = [...chartData.voltage];
+      charts.full.data.datasets[1].data = [...chartData.current];
+      charts.full.data.datasets[2].data = [...chartData.power];
+      charts.full.update("none");
+    }
+  } catch (error) {
+    console.error("❌ Chart update error:", error);
+  }
+}
+
+function updateTime() {
+  try {
+    const time = new Date().toLocaleTimeString("fr-FR");
+    const footerTime = document.getElementById("footerTime");
+    if (footerTime) footerTime.textContent = time;
+  } catch (error) {
+    console.error("❌ Time update error:", error);
+  }
+}
+
+function setApiStatus(connected) {
+  apiConnected = connected;
+  const statusEl = document.getElementById("apiStatus");
+  if (statusEl) {
+    statusEl.className = connected ? "api-connected" : "api-disconnected";
+    statusEl.textContent = connected ? "✅ API OK" : "❌ API Err";
+  }
+}
+
+function showError(message) {
+  const errorEl = document.getElementById("errorMessage");
+  if (errorEl) {
+    errorEl.textContent = message;
+    errorEl.style.display = "block";
+    setTimeout(() => {
+      errorEl.style.display = "none";
+    }, 3000);
+  }
+}
+
+// ===== RELAYS =====
+function initRelays() {
+  console.log("🔌 Initializing relays...");
+
+  // Quick relay buttons
+  const quickBtns = document.querySelectorAll(".relay-btn-quick");
+  console.log(`Found ${quickBtns.length} quick relay buttons`);
+  quickBtns.forEach((btn) => {
+    const relayId = btn.getAttribute("data-relay");
+    if (relayId !== null) {
+      btn.addEventListener("click", () => toggleRelay(parseInt(relayId)));
+    }
+  });
+
+  // Relay card buttons
+  const toggleBtns = document.querySelectorAll(".btn-toggle");
+  console.log(`Found ${toggleBtns.length} toggle buttons`);
+  toggleBtns.forEach((btn) => {
+    const relayId = btn.getAttribute("data-id");
+    if (relayId !== null) {
+      btn.addEventListener("click", () => toggleRelay(parseInt(relayId)));
+    }
+  });
+}
+
+async function toggleRelay(id) {
+  if (id < 0 || id > 7) {
+    console.error(`Invalid relay ID: ${id}`);
+    return;
+  }
+
+  try {
+    console.log(`🔘 Toggling relay ${id}...`);
+    const url = `${API_BASE}/relay?id=${id}`;
+    console.log(`📤 POST ${url}`);
+
+    const response = await fetch(url, { method: "POST" });
+    console.log(`📊 Response: status=${response.status}`);
+
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+
+    const text = await response.text();
+    console.log(`📦 Relay response: ${text}`);
+
+    // Update immediately
+    relayStates[id] = !relayStates[id];
+    updateRelayDisplay();
+
+    // Fetch new data
+    await updateData();
+    showError("✓ Relais basculé");
+  } catch (error) {
+    console.error("❌ Relay error:", error);
+    showError(`Erreur relais ${id}: ${error.message}`);
+  }
+}
+
+function updateRelayDisplay() {
+  document.querySelectorAll(".relay-card").forEach((card, idx) => {
+    const btn = card.querySelector(".btn-toggle");
+    if (btn) {
+      const state = relayStates[idx];
+      card.classList.toggle("active", state);
+      btn.textContent = state ? "✓ ON" : "✗ OFF";
+      btn.classList.toggle("on", state);
+    }
+  });
+
+  document.querySelectorAll(".relay-btn-quick").forEach((btn, idx) => {
+    btn.classList.toggle("active", relayStates[idx]);
+  });
+}
+
+// ===== COMMANDS =====
+document.addEventListener("click", (e) => {
+  if (e.target.classList.contains("cmd-btn")) {
+    const cmd = e.target.getAttribute("data-cmd");
+    if (cmd) execCommand(cmd);
+  }
+});
+
+async function execCommand(cmd) {
+  try {
+    console.log(`⚡ Executing command: ${cmd}`);
+    const url = `${API_BASE}/cmd?cmd=${cmd}`;
+    console.log(`📤 POST ${url}`);
+
+    const response = await fetch(url, { method: "POST" });
+    console.log(`📊 Response: status=${response.status}`);
+
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+
+    const text = await response.text();
+    console.log(`📦 Command response: ${text}`);
+
+    const result = JSON.parse(text);
+    showError(`✅ ${cmd}: ${result.message || result.status}`);
+
+    // Update data after command
+    setTimeout(updateData, 500);
+  } catch (error) {
+    console.error("❌ Command error:", error);
+    showError(`Erreur: ${error.message}`);
+  }
+}
+
+// ===== RFID =====
+async function loadRFID() {
+  const rfidList = document.getElementById("rfidList");
+  if (!rfidList) return;
+
+  rfidList.innerHTML = "Chargement...";
+
+  try {
+    console.log("🔐 Loading RFID list...");
+    const response = await fetch(`${API_BASE}/rfid/list`);
+    console.log(`📊 RFID Response: status=${response.status}`);
+
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+
+    const cards = await response.json();
+    console.log("✓ RFID cards loaded:", cards);
+
+    if (!Array.isArray(cards) || cards.length === 0) {
+      rfidList.innerHTML =
+        "<p style='text-align:center; padding:20px; color:#999;'>Aucune carte RFID enregistrée</p>";
+      return;
+    }
+
+    let html = '<table style="width:100%; border-collapse:collapse;">';
+    html +=
+      '<tr style="background:#667eea; color:white;"><th style="padding:10px; text-align:left;">UID</th><th style="padding:10px; text-align:left;">Nom</th><th style="padding:10px; text-align:left;">Autorisé</th><th style="padding:10px; text-align:left;">Présent</th></tr>';
+
+    cards.forEach((card, idx) => {
+      const bgColor =
+        idx % 2 === 0 ? "var(--color-card)" : "rgba(102, 126, 234, 0.05)";
+      const authorized = card.authorized ? "✅ Oui" : "❌ Non";
+      const isInside = card.isInside ? "🟢 Présent" : "🔴 Absent";
+      html += `<tr style="background:${bgColor}; border-bottom:1px solid var(--color-border);">
+        <td style="padding:10px; font-family:monospace; font-size:12px;">${card.uid}</td>
+        <td style="padding:10px;">${card.name || "---"}</td>
+        <td style="padding:10px;">${authorized}</td>
+        <td style="padding:10px;">${isInside}</td>
+      </tr>`;
+    });
+
+    html += "</table>";
+    rfidList.innerHTML = html;
+  } catch (error) {
+    console.error("❌ RFID load error:", error);
+    rfidList.innerHTML = `<p style='text-align:center; padding:20px; color:#ff6b6b;'>❌ Erreur: ${error.message}</p>`;
+  }
+}
+
+// ===== RFID MANAGEMENT =====
+async function registerRFID() {
+  const uid = document.getElementById("rfidUid")?.value?.trim();
+  const name = document.getElementById("rfidName")?.value?.trim();
+
+  if (!uid || !name) {
+    showError("❌ UID et Nom requis");
+    return;
+  }
+
+  try {
+    console.log(`📝 Registering RFID: ${uid} - ${name}`);
+    const response = await fetch(`${API_BASE}/rfid/register`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ uid, name }),
+    });
+
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+
+    const result = await response.json();
+    console.log("✓ RFID registered:", result);
+
+    closeRFIDModal();
+    document.getElementById("rfidUid").value = "";
+    document.getElementById("rfidName").value = "";
+    showError("✅ Carte enregistrée!");
+    await loadRFID();
+  } catch (error) {
+    console.error("❌ Register error:", error);
+    showError(`Erreur: ${error.message}`);
+  }
+}
+
+async function deleteRFID(uid) {
+  if (!confirm(`Supprimer la carte ${uid}?`)) return;
+
+  try {
+    console.log(`🗑️ Deleting RFID: ${uid}`);
+    const response = await fetch(`${API_BASE}/rfid/delete?uid=${encodeURIComponent(uid)}`, {
+      method: "POST",
+    });
+
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+
+    const result = await response.json();
+    console.log("✓ RFID deleted:", result);
+
+    showError("✅ Carte supprimée!");
+    await loadRFID();
+  } catch (error) {
+    console.error("❌ Delete error:", error);
+    showError(`Erreur: ${error.message}`);
+  }
+}
+
+function showRFIDModal() {
+  const modal = document.getElementById("rfidModal");
+  if (modal) {
+    modal.style.display = "block";
+    document.getElementById("rfidUid").focus();
+  }
+}
+
+function closeRFIDModal() {
+  const modal = document.getElementById("rfidModal");
+  if (modal) modal.style.display = "none";
+}
+
+// Close modal on Escape
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape") closeRFIDModal();
+});
+
+// Close modal on outside click
+window.addEventListener("click", (e) => {
+  const modal = document.getElementById("rfidModal");
+  if (modal && e.target === modal) modal.style.display = "none";
+});

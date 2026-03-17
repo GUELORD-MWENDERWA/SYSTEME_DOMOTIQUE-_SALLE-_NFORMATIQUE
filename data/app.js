@@ -1,487 +1,569 @@
-// Configuration
-const API_INTERVAL = 250; // 250ms for ultra-fast updates
+const UPDATE_INTERVAL = 500;
 const CHART_POINTS = 60;
-const API_TIMEOUT = 5000; // 5 second timeout for API calls
-let updateInterval = API_INTERVAL;
+const API_BASE = "/api";
 
-// State
 let systemData = null;
-let rfidListData = [];
-let relayStates = [false, false, false, false, false, false, false, false];
 let chartData = {
-    labels: [],
-    voltages: [],
-    currents: [],
-    powers: []
+  voltage: [],
+  current: [],
+  power: [],
 };
-let chart = null;
-let lastUpdateTime = 0;
+let charts = {};
+let relayStates = [false, false, false, false, false, false, false, false];
 let updating = false;
-let consecutiveErrors = 0;
-let maxConsecutiveErrors = 3;
 
-// Theme Management
+// Initialize
+window.addEventListener("load", () => {
+  for (let i = 0; i < CHART_POINTS; i++) {
+    chartData.voltage.push(0);
+    chartData.current.push(0);
+    chartData.power.push(0);
+  }
+  initTheme();
+  initNavigation();
+  initCharts();
+  initRelays();
+  startUpdates();
+});
+
+// Theme
 function initTheme() {
-    const saved = localStorage.getItem('theme') || 'light';
-    setTheme(saved);
-    document.getElementById('themeBtn').addEventListener('click', toggleTheme);
+  const saved = localStorage.getItem("theme") || "light";
+  setTheme(saved);
+  document.getElementById("themeBtn").addEventListener("click", toggleTheme);
 }
 
 function setTheme(theme) {
-    document.documentElement.setAttribute('data-theme', theme);
-    localStorage.setItem('theme', theme);
-    const icon = theme === 'dark' ? '☀️' : '🌙';
-    document.getElementById('themeBtn').textContent = icon;
+  document.documentElement.setAttribute("data-theme", theme);
+  localStorage.setItem("theme", theme);
+  document.getElementById("themeBtn").textContent =
+    theme === "dark" ? "☀️" : "🌙";
 }
 
 function toggleTheme() {
-    const current = document.documentElement.getAttribute('data-theme') || 'light';
-    const next = current === 'light' ? 'dark' : 'light';
-    setTheme(next);
+  const current =
+    document.documentElement.getAttribute("data-theme") || "light";
+  setTheme(current === "light" ? "dark" : "light");
 }
 
 // Navigation
 function initNavigation() {
-    document.querySelectorAll('.nav-btn').forEach(btn => {
-        btn.addEventListener('click', (e) => {
-            const page = e.target.getAttribute('data-page');
-            showPage(page);
-            
-            // Update active button
-            document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
-            e.target.classList.add('active');
-        });
+  document.querySelectorAll(".nav-btn").forEach((btn) => {
+    btn.addEventListener("click", (e) => {
+      const page = e.target.getAttribute("data-page");
+      showPage(page);
+      document
+        .querySelectorAll(".nav-btn")
+        .forEach((b) => b.classList.remove("active"));
+      e.target.classList.add("active");
     });
+  });
 }
 
 function showPage(pageName) {
-    // Hide all pages
-    document.querySelectorAll('.page-content').forEach(p => p.classList.remove('active'));
-    
-    // Show selected page
-    const page = document.getElementById(pageName + '-page');
-    if (page) {
-        page.classList.add('active');
-        
-        // Update title
-        const titles = {
-            dashboard: '📊 Dashboard',
-            relays: '⚙️ Relais',
-            energy: '⚡ Énergie',
-            rfid: '🔐 Cartes RFID',
-            commands: '💻 Commandes'
-        };
-        document.getElementById('pageTitle').textContent = titles[pageName] || 'Page';
-    }
+  document.querySelectorAll(".page").forEach((p) => {
+    p.style.display = "none";
+    p.classList.remove("active");
+  });
+  const page = document.getElementById(pageName);
+  if (page) {
+    page.style.display = "block";
+    page.classList.add("active");
+  }
+
+  const titles = {
+    dashboard: "📊 Dashboard",
+    charts: "📈 Graphiques",
+    relays: "⚙️ Relais",
+    rfid: "🔐 RFID",
+    commands: "💻 Commandes",
+  };
+  document.getElementById("pageTitle").textContent = titles[pageName] || "Page";
+
+  if (pageName === "rfid") {
+    loadRFID();
+  }
 }
 
-// Real-time data updates (optimized with Promise.all for parallel requests)
-async function updateSystemData() {
-    if (updating) return; // Skip if already updating
-    updating = true;
-    
-    try {
-        // Create timeout promise
-        const timeoutPromise = new Promise((_, reject) =>
-            setTimeout(() => reject(new Error('API timeout')), API_TIMEOUT)
-        );
-        
-        // Fetch both system data and RFID list in parallel with timeout
-        const fetchPromise = Promise.all([
-            fetch('/api/system'),
-            fetch('/api/rfid/list')
-        ]);
-        
-        const [systemResponse, rfidResponse] = await Promise.race([fetchPromise, timeoutPromise]);
-        
-        if (!systemResponse.ok || !rfidResponse.ok) {
-            throw new Error(`API response not ok: system=${systemResponse.status}, rfid=${rfidResponse.status}`);
-        }
-        
-        // Parse responses in parallel too
-        const [newSystemData, newRFIDList] = await Promise.all([
-            systemResponse.json(),
-            rfidResponse.json()
-        ]);
-        
-        systemData = newSystemData;
-        rfidListData = newRFIDList || [];
-        consecutiveErrors = 0; // Reset error counter on success
-        
-        // Update all UI elements at once
-        updateEnergy();
-        updateStatus();
-        updateRelayDisplay();
-        updateChartData();
-        updateRFIDList();
-        
-        // Log heartbeat
-        console.log(`💚 Data updated at ${new Date().toLocaleTimeString()}`);
-        
-    } catch (error) {
-        consecutiveErrors++;
-        console.error(`❌ Data update failed (${consecutiveErrors}/${maxConsecutiveErrors}):`, error);
-        
-        // If too many consecutive errors, show warning
-        if (consecutiveErrors >= maxConsecutiveErrors) {
-            const nowLabel = new Date().toLocaleTimeString();
-            console.warn(`⚠️ Connection lost at ${nowLabel}`);
-        }
-    } finally {
-        updating = false;
-    }
+// Charts - SIMPLE & FUNCTIONAL
+function initCharts() {
+  const labels = Array(CHART_POINTS).fill(0).map((_, i) => i);
+
+  // Voltage Chart
+  const voltageCtx = document.getElementById("voltageChart")?.getContext("2d");
+  if (voltageCtx) {
+    charts.voltage = new Chart(voltageCtx, {
+      type: "line",
+      data: {
+        labels: labels,
+        datasets: [{
+          label: "Tension (V)",
+          data: chartData.voltage,
+          borderColor: "#FF6B6B",
+          backgroundColor: "rgba(255, 107, 107, 0.1)",
+          borderWidth: 2,
+          fill: true,
+          tension: 0.3,
+          pointRadius: 0,
+        }],
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: true,
+        animation: false,
+        plugins: { legend: { display: false } },
+        scales: {
+          y: {
+            min: 0,
+            max: 250,
+            ticks: { stepSize: 50 }
+          }
+        },
+      },
+    });
+  }
+
+  // Current Chart
+  const currentCtx = document.getElementById("currentChart")?.getContext("2d");
+  if (currentCtx) {
+    charts.current = new Chart(currentCtx, {
+      type: "line",
+      data: {
+        labels: labels,
+        datasets: [{
+          label: "Courant (A)",
+          data: chartData.current,
+          borderColor: "#4ECDC4",
+          backgroundColor: "rgba(78, 205, 196, 0.1)",
+          borderWidth: 2,
+          fill: true,
+          tension: 0.3,
+          pointRadius: 0,
+        }],
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: true,
+        animation: false,
+        plugins: { legend: { display: false } },
+        scales: {
+          y: {
+            min: 0,
+            max: 10,
+            ticks: { stepSize: 2 }
+          }
+        },
+      },
+    });
+  }
+
+  // Power Chart
+  const powerCtx = document.getElementById("powerChart")?.getContext("2d");
+  if (powerCtx) {
+    charts.power = new Chart(powerCtx, {
+      type: "line",
+      data: {
+        labels: labels,
+        datasets: [{
+          label: "Puissance (W)",
+          data: chartData.power,
+          borderColor: "#FFE66D",
+          backgroundColor: "rgba(255, 230, 109, 0.1)",
+          borderWidth: 2,
+          fill: true,
+          tension: 0.3,
+          pointRadius: 0,
+        }],
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: true,
+        animation: false,
+        plugins: { legend: { display: false } },
+        scales: {
+          y: {
+            min: 0,
+            max: 5000,
+            ticks: { stepSize: 1000 }
+          }
+        },
+      },
+    });
+  }
+
+  // Full chart
+  const fullCtx = document.getElementById("fullChart")?.getContext("2d");
+  if (fullCtx) {
+    charts.full = new Chart(fullCtx, {
+      type: "line",
+      data: {
+        labels: labels,
+        datasets: [
+          {
+            label: "V",
+            data: chartData.voltage,
+            borderColor: "#FF6B6B",
+            borderWidth: 2,
+            fill: false,
+            tension: 0.3,
+            pointRadius: 0,
+          },
+          {
+            label: "A",
+            data: chartData.current,
+            borderColor: "#4ECDC4",
+            borderWidth: 2,
+            fill: false,
+            tension: 0.3,
+            pointRadius: 0,
+          },
+          {
+            label: "W",
+            data: chartData.power,
+            borderColor: "#FFE66D",
+            borderWidth: 2,
+            fill: false,
+            tension: 0.3,
+            pointRadius: 0,
+          },
+        ],
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: true,
+        animation: false,
+        plugins: { legend: { display: true } },
+        scales: {
+          y: { beginAtZero: true }
+        },
+      },
+    });
+  }
 }
 
-function updateEnergy() {
-    if (!systemData) return;
-    
-    const voltage = systemData.voltage || 0;
-    const current = systemData.current || 0;
-    const power = systemData.power || 0;
-    const frequency = systemData.frequency || 0;
-    
-    // Dashboard
-    document.getElementById('voltage').textContent = voltage.toFixed(1) + 'V';
-    document.getElementById('current').textContent = current.toFixed(2) + 'A';
-    document.getElementById('power').textContent = Math.round(power) + 'W';
-    document.getElementById('frequency').textContent = frequency.toFixed(1) + 'Hz';
-    
-    // Energy page
-    document.getElementById('voltage2').textContent = voltage.toFixed(1);
-    document.getElementById('current2').textContent = current.toFixed(2);
-    document.getElementById('power2').textContent = Math.round(power);
-    document.getElementById('frequency2').textContent = frequency.toFixed(1);
-    
-    // Progress bars
-    document.getElementById('voltageBar').style.width = Math.min(100, (voltage / 250) * 100) + '%';
-    document.getElementById('currentBar').style.width = Math.min(100, (current / 50) * 100) + '%';
-    document.getElementById('powerBar').style.width = Math.min(100, (power / 5000) * 100) + '%';
+// Data Updates
+function startUpdates() {
+  updateData();
+  setInterval(updateData, UPDATE_INTERVAL);
+  setInterval(updateTime, 1000);
 }
 
-function updateStatus() {
-    if (!systemData) return;
-    
-    document.getElementById('presence').textContent = systemData.presence_count || 0;
-    document.getElementById('entries').textContent = systemData.entries_count || 0;
-    document.getElementById('exits').textContent = systemData.exits_count || 0;
-    
-    const alarm = document.getElementById('alarm');
-    alarm.textContent = systemData.intrusion_detected ? 'ON' : 'OFF';
-    alarm.style.color = systemData.intrusion_detected ? '#ff6b6b' : '#48c6a6';
-    
-    // Update time
-    const now = new Date().toLocaleTimeString('fr-FR');
-    document.getElementById('timeBadge').textContent = now;
-    
-    // Mode badge
-    const modeBadge = document.getElementById('modeBadge');
-    modeBadge.textContent = systemData.current_mode === 0 ? 'ACCÈS' : 'ENREGISTREMENT';
-    
-    // Day/Night badge
-    const dayNightBadge = document.getElementById('dayNightBadge');
-    dayNightBadge.textContent = systemData.daynight === 0 ? 'JOUR' : 'NUIT';
+async function updateData() {
+  if (updating) return;
+  updating = true;
+
+  try {
+    const response = await fetch(`${API_BASE}/system`);
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+
+    const text = await response.text();
+    systemData = JSON.parse(text);
+
+    setApiStatus(true);
+    updateUI();
+    updateCharts_data();
+  } catch (error) {
+    console.error("❌ API Error:", error.message);
+    setApiStatus(false);
+  } finally {
+    updating = false;
+  }
+}
+
+function updateUI() {
+  if (!systemData) return;
+
+  document.getElementById("sysMode").textContent =
+    systemData.current_mode === 0 ? "ACCESS" : "REG";
+  document.getElementById("sysDayNight").textContent =
+    systemData.daynight === 0 ? "☀️ Jour" : "🌙 Nuit";
+  document.getElementById("dashVolt").textContent =
+    (systemData.voltage || 0).toFixed(1) + "V";
+  document.getElementById("dashAmp").textContent =
+    (systemData.current || 0).toFixed(2) + "A";
+  document.getElementById("dashEntries").textContent =
+    systemData.entries_count || 0;
+  document.getElementById("dashExits").textContent =
+    systemData.exits_count || 0;
+
+  if (Array.isArray(systemData.relays)) {
+    relayStates = systemData.relays;
+    updateRelayDisplay();
+  }
+
+  document.getElementById("footerStatus").textContent =
+    systemData.intrusion_detected ? "🚨 ALARME!" : "✅ OK";
+}
+
+function updateCharts_data() {
+  if (!systemData) return;
+
+  chartData.voltage.shift();
+  chartData.voltage.push(systemData.voltage || 0);
+
+  chartData.current.shift();
+  chartData.current.push(systemData.current || 0);
+
+  chartData.power.shift();
+  chartData.power.push(systemData.power || 0);
+
+  // Update voltage chart avec échelle dynamique
+  if (charts.voltage) {
+    charts.voltage.data.datasets[0].data = chartData.voltage;
+    const voltageMax = Math.max((systemData.voltage || 0) + 10, 250);
+    charts.voltage.options.scales.y.max = voltageMax;
+    charts.voltage.update("none");
+  }
+
+  // Update current chart avec échelle dynamique
+  if (charts.current) {
+    charts.current.data.datasets[0].data = chartData.current;
+    const currentMax = Math.max((systemData.current || 0) + 5, 10);
+    charts.current.options.scales.y.max = currentMax;
+    charts.current.update("none");
+  }
+
+  // Update power chart avec échelle dynamique
+  if (charts.power) {
+    charts.power.data.datasets[0].data = chartData.power;
+    const powerMax = Math.max((systemData.power || 0) + 1000, 5000);
+    charts.power.options.scales.y.max = powerMax;
+    charts.power.update("none");
+  }
+
+  // Update full chart
+  if (charts.full) {
+    charts.full.data.datasets[0].data = chartData.voltage;
+    charts.full.data.datasets[1].data = chartData.current;
+    charts.full.data.datasets[2].data = chartData.power;
+    charts.full.update("none");
+  }
+}
+
+function updateTime() {
+  const now = new Date().toLocaleTimeString("fr-FR");
+  const toEl = document.getElementById("footerTime");
+  if (toEl) toEl.textContent = now;
+  const luEl = document.getElementById("lastUpdate");
+  if (luEl) luEl.textContent = now;
+}
+
+function setApiStatus(connected) {
+  const el = document.getElementById("apiStatus");
+  if (el) {
+    el.classList.toggle("api-connected", connected);
+    el.classList.toggle("api-disconnected", !connected);
+    el.textContent = connected ? "✅ API OK" : "❌ API Err";
+  }
+}
+
+function showError(message) {
+  const el = document.getElementById("errorMessage");
+  if (el) {
+    el.textContent = message;
+    el.style.display = "block";
+    setTimeout(() => {
+      el.style.display = "none";
+    }, 3000);
+  }
+}
+
+// Relays
+function initRelays() {
+  document.querySelectorAll(".relay-btn-quick").forEach((btn) => {
+    const id = btn.getAttribute("data-relay");
+    if (id !== null)
+      btn.addEventListener("click", () => toggleRelay(parseInt(id)));
+  });
+
+  document.querySelectorAll(".btn-toggle").forEach((btn) => {
+    const id = btn.getAttribute("data-id");
+    if (id !== null)
+      btn.addEventListener("click", () => toggleRelay(parseInt(id)));
+  });
+}
+
+async function toggleRelay(id) {
+  if (id < 0 || id > 7) return;
+
+  try {
+    const response = await fetch(`${API_BASE}/relay?id=${id}`, {
+      method: "POST",
+    });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+
+    relayStates[id] = !relayStates[id];
+    updateRelayDisplay();
+    await updateData();
+    showError("✓ Relais basculé");
+  } catch (error) {
+    showError(`Erreur: ${error.message}`);
+  }
 }
 
 function updateRelayDisplay() {
-    if (!systemData || !systemData.relays) return;
-    
-    relayStates = systemData.relays;
-    
-    relayStates.forEach((state, index) => {
-        // Update cards on relays page
-        const card = document.querySelector(`.relay-card[data-relay="${index}"]`);
-        if (card) {
-            const btn = card.querySelector('.btn-toggle-relay');
-            btn.textContent = state ? 'ON' : 'OFF';
-            btn.classList.toggle('on', state);
-            card.classList.toggle('active', state);
-        }
-        
-        // Update quick buttons
-        const quickBtn = document.querySelector(`.relay-quick-btn[data-relay="${index}"]`);
-        if (quickBtn) {
-            quickBtn.classList.toggle('active', state);
-        }
-    });
-}
+  document.querySelectorAll(".relay-card").forEach((card, idx) => {
+    const btn = card.querySelector(".btn-toggle");
+    if (btn) {
+      const state = relayStates[idx];
+      card.classList.toggle("active", state);
+      btn.textContent = state ? "✓ ON" : "✗ OFF";
+      btn.classList.toggle("on", state);
+    }
+  });
 
-function updateChartData() {
-    if (!systemData) return;
-    
-    const now = new Date();
-    const timeLabel = now.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
-    
-    chartData.labels.push(timeLabel);
-    chartData.voltages.push(systemData.voltage || 0);
-    chartData.currents.push(systemData.current || 0);
-    chartData.powers.push(systemData.power || 0);
-    
-    // Keep only last CHART_POINTS
-    if (chartData.labels.length > CHART_POINTS) {
-        chartData.labels.shift();
-        chartData.voltages.shift();
-        chartData.currents.shift();
-        chartData.powers.shift();
-    }
-    
-    if (chart) {
-        chart.data.labels = chartData.labels;
-        chart.data.datasets[0].data = chartData.voltages;
-        chart.data.datasets[1].data = chartData.currents;
-        chart.data.datasets[2].data = chartData.powers;
-        chart.update();
-    }
-}
-
-async function updateRFIDList() {
-    const tbody = document.getElementById('rfidBody');
-    if (!tbody) return;
-    
-    const cards = rfidListData;
-    
-    if (!cards || cards.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;">Aucune carte enregistrée</td></tr>';
-        return;
-    }
-    
-    tbody.innerHTML = cards.map(card => `
-        <tr>
-            <td>${card.uid}</td>
-            <td>${card.name || '-'}</td>
-            <td>${card.authorized ? '✓' : '✗'}</td>
-            <td>${card.isInside ? '✓' : '✗'}</td>
-            <td><button class="btn-delete" onclick="deleteCard('${card.uid}')">Supprimer</button></td>
-        </tr>
-    `).join('');
-}
-
-// Relay Control
-async function toggleRelay(index) {
-    try {
-        const response = await fetch(`/api/relay?id=${index}`, {
-            method: 'POST'
-        });
-        
-        if (!response.ok) throw new Error(`HTTP ${response.status}`);
-        
-        // Update local state immediately
-        relayStates[index] = !relayStates[index];
-        updateRelayDisplay();
-        
-    } catch (error) {
-        console.error('Toggle relay failed:', error);
-        alert('Erreur: Impossible de basculer le relais');
-    }
-}
-
-// Add relay button handlers
-function initRelayButtons() {
-    document.querySelectorAll('.relay-quick-btn').forEach(btn => {
-        btn.addEventListener('click', () => {
-            const relay = parseInt(btn.getAttribute('data-relay'));
-            toggleRelay(relay);
-        });
-    });
-    
-    document.querySelectorAll('.btn-toggle-relay').forEach(btn => {
-        btn.addEventListener('click', (e) => {
-            const relay = parseInt(e.target.getAttribute('data-relay'));
-            toggleRelay(relay);
-        });
-    });
-}
-
-// RFID Management
-async function registerRFIDCard(event) {
-    if (event) event.preventDefault();
-    
-    const uid = document.getElementById('uidInput').value;
-    const name = document.getElementById('nameInput').value;
-    const access = document.getElementById('accessInput').value;
-    
-    if (!uid || !name) {
-        alert('UID et Nom sont obligatoires');
-        return;
-    }
-    
-    try {
-        const response = await fetch('/api/rfid/register', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ uid, name, authorized: access === '1' })
-        });
-        
-        if (!response.ok) throw new Error(`HTTP ${response.status}`);
-        
-        document.getElementById('uidInput').value = '';
-        document.getElementById('nameInput').value = '';
-        
-        alert('✅ Carte enregistrée avec succès!');
-        await updateSystemData(); // Refresh all data
-        
-    } catch (error) {
-        console.error('❌ Register card failed:', error);
-        alert('❌ Erreur: Impossible d\'enregistrer la carte');
-    }
-}
-
-async function deleteCard(uid) {
-    if (!confirm(`🗑️ Supprimer la carte ${uid} ?`)) return;
-    
-    try {
-        const response = await fetch(`/api/rfid/delete?uid=${uid}`, {
-            method: 'POST'
-        });
-        
-        if (!response.ok) throw new Error(`HTTP ${response.status}`);
-        
-        alert('✅ Carte supprimée!');
-        await updateSystemData(); // Refresh all data
-        
-    } catch (error) {
-        console.error('❌ Delete card failed:', error);
-        alert('❌ Erreur: Impossible de supprimer la carte');
-    }
+  document.querySelectorAll(".relay-btn-quick").forEach((btn, idx) => {
+    btn.classList.toggle("active", relayStates[idx]);
+  });
 }
 
 // Commands
-async function sendCommand(cmd) {
-    if (!confirm(`Exécuter: ${cmd} ?`)) return;
-    
-    try {
-        const response = await fetch(`/api/cmd?cmd=${cmd.toUpperCase()}`, {
-            method: 'POST'
-        });
-        
-        if (!response.ok) throw new Error(`HTTP ${response.status}`);
-        
-        alert(`Commande ${cmd} exécutée!`);
-        
-        // Force refresh
-        setTimeout(updateSystemData, 500);
-        
-    } catch (error) {
-        console.error('Command failed:', error);
-        alert('Erreur: Impossible d\'exécuter la commande');
-    }
-}
+document.addEventListener("click", (e) => {
+  if (e.target.classList.contains("cmd-btn")) {
+    const cmd = e.target.getAttribute("data-cmd");
+    if (cmd) execCommand(cmd);
+  }
+});
 
-function initCommandButtons() {
-    document.querySelectorAll('.btn-cmd').forEach(btn => {
-        btn.addEventListener('click', () => {
-            const cmd = btn.getAttribute('data-cmd');
-            sendCommand(cmd);
-        });
+async function execCommand(cmd) {
+  try {
+    const response = await fetch(`${API_BASE}/cmd?cmd=${cmd}`, {
+      method: "POST",
     });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+
+    const text = await response.text();
+    const result = JSON.parse(text);
+    showError(`✅ ${cmd}: ${result.message || result.status}`);
+    setTimeout(updateData, 500);
+  } catch (error) {
+    showError(`Erreur: ${error.message}`);
+  }
 }
 
-// Initialize Chart.js
-function initChart() {
-    const ctx = document.getElementById('energyChart');
-    if (!ctx) return;
-    
-    chart = new Chart(ctx, {
-        type: 'line',
-        data: {
-            labels: [],
-            datasets: [
-                {
-                    label: 'Tension (V)',
-                    data: [],
-                    borderColor: '#667eea',
-                    backgroundColor: 'rgba(102, 126, 234, 0.1)',
-                    yAxisID: 'y',
-                    tension: 0.4,
-                    fill: true,
-                    pointRadius: 2,
-                    pointBackgroundColor: '#667eea'
-                },
-                {
-                    label: 'Courant (A)',
-                    data: [],
-                    borderColor: '#764ba2',
-                    backgroundColor: 'rgba(118, 75, 162, 0.1)',
-                    yAxisID: 'y1',
-                    tension: 0.4,
-                    fill: true,
-                    pointRadius: 2,
-                    pointBackgroundColor: '#764ba2'
-                },
-                {
-                    label: 'Puissance (W)',
-                    data: [],
-                    borderColor: '#48c6a6',
-                    backgroundColor: 'rgba(72, 198, 166, 0.1)',
-                    yAxisID: 'y2',
-                    tension: 0.4,
-                    fill: false,
-                    pointRadius: 2,
-                    pointBackgroundColor: '#48c6a6'
-                }
-            ]
-        },
-        options: {
-            responsive: true,
-            maintainAspectRatio: true,
-            interaction: {
-                mode: 'index',
-                intersect: false
-            },
-            scales: {
-                y: {
-                    type: 'linear',
-                    display: true,
-                    position: 'left',
-                    title: { display: true, text: 'Tension (V)' },
-                    max: 250
-                },
-                y1: {
-                    type: 'linear',
-                    display: true,
-                    position: 'right',
-                    title: { display: true, text: 'Courant (A)' },
-                    max: 50,
-                    grid: { drawOnChartArea: false }
-                },
-                y2: {
-                    type: 'linear',
-                    display: false,
-                    max: 5000
-                }
-            },
-            plugins: {
-                legend: { display: true }
-            }
-        }
+// RFID Management
+async function addRFID() {
+  const uid = document.getElementById("rfidUid")?.value?.trim();
+  const name = document.getElementById("rfidName")?.value?.trim();
+
+  if (!uid || !name) {
+    showError("❌ UID et Nom requis");
+    return;
+  }
+
+  try {
+    const response = await fetch(`${API_BASE}/rfid/register`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ uid, name }),
     });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+
+    clearRFIDForm();
+    showError("✅ Carte ajoutée!");
+    loadRFID();
+  } catch (error) {
+    showError(`Erreur: ${error.message}`);
+  }
 }
 
-// RFID Form Handler
-function initRFIDForm() {
-    const form = document.getElementById('rfidForm');
-    if (form) {
-        form.addEventListener('submit', registerRFIDCard);
+async function authorizeRFID() {
+  const uid = document.getElementById("rfidUid")?.value?.trim();
+  if (!uid) {
+    showError("❌ UID requis");
+    return;
+  }
+
+  try {
+    const response = await fetch(`${API_BASE}/rfid/authorize?uid=${encodeURIComponent(uid)}`, { method: "POST" });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+
+    showError("✅ Carte autorisée!");
+    loadRFID();
+  } catch (error) {
+    showError(`Erreur: ${error.message}`);
+  }
+}
+
+async function unauthorizeRFID() {
+  const uid = document.getElementById("rfidUid")?.value?.trim();
+  if (!uid) {
+    showError("❌ UID requis");
+    return;
+  }
+
+  try {
+    const response = await fetch(`${API_BASE}/rfid/unauthorize?uid=${encodeURIComponent(uid)}`, { method: "POST" });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+
+    showError("✅ Carte refusée!");
+    loadRFID();
+  } catch (error) {
+    showError(`Erreur: ${error.message}`);
+  }
+}
+
+function clearRFIDForm() {
+  document.getElementById("rfidUid").value = "";
+  document.getElementById("rfidName").value = "";
+}
+
+// RFID Load
+async function loadRFID() {
+  const rfidList = document.getElementById("rfidList");
+  if (!rfidList) return;
+
+  rfidList.innerHTML = "Chargement...";
+
+  try {
+    const response = await fetch(`${API_BASE}/rfid/list`);
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+
+    const cards = await response.json();
+
+    if (!Array.isArray(cards) || cards.length === 0) {
+      rfidList.innerHTML = "<p style='text-align:center; padding:20px; color:#999;'>Aucune carte RFID</p>";
+      return;
     }
+
+    let html = "<div style='display: flex; flex-direction: column; gap: 10px;'>";
+    cards.forEach((card) => {
+      const auth = card.authorized ? "✅" : "❌";
+      const inside = card.isInside ? "🟢" : "🔴";
+      html += `<div style='background: var(--color-card); padding: 12px; border-radius: 8px; border: 1px solid var(--color-border); display: flex; justify-content: space-between; align-items: center;'>
+        <div>
+          <div style='font-weight: bold;'>${card.name || "---"}</div>
+          <div style='font-size: 12px; opacity: 0.7; margin-top: 5px;'>${card.uid}</div>
+          <div style='font-size: 12px; margin-top: 5px;'>${auth} Auth | ${inside} Présent</div>
+        </div>
+        <div style='display: flex; gap: 5px;'>
+          <button onclick="loadRFIDToForm('${card.uid}', '${card.name || ''}')" style='padding: 6px 10px; background: #667eea; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 11px;'>✏️ Éditer</button>
+          <button onclick="deleteRFID('${card.uid}')" style='padding: 6px 10px; background: #f44336; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 11px;'>🗑️ Suppr</button>
+        </div>
+      </div>`;
+    });
+    html += "</div>";
+    rfidList.innerHTML = html;
+  } catch (error) {
+    rfidList.innerHTML = `<p style='color: #ff6b6b;'>Erreur: ${error.message}</p>`;
+  }
 }
 
-// Initialize Application
-function initApp() {
-    initTheme();
-    initNavigation();
-    initRelayButtons();
-    initCommandButtons();
-    initRFIDForm();
-    initChart();
-    
-    // Start data updates
-    updateSystemData();
-    setInterval(updateSystemData, updateInterval);
-    
-    // Show dashboard by default
-    showPage('dashboard');
-    
-    console.log('🏠 Domotique App initialized');
+function loadRFIDToForm(uid, name) {
+  document.getElementById("rfidUid").value = uid;
+  document.getElementById("rfidName").value = name;
 }
 
-// Start when DOM is ready
-document.addEventListener('DOMContentLoaded', initApp);
+async function deleteRFID(uid) {
+  if (!confirm(`Supprimer la carte ${uid}?`)) return;
+
+  try {
+    const response = await fetch(`${API_BASE}/rfid/delete?uid=${encodeURIComponent(uid)}`, { method: "POST" });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+
+    showError("✅ Carte supprimée!");
+    loadRFID();
+  } catch (error) {
+    showError(`Erreur: ${error.message}`);
+  }
+}

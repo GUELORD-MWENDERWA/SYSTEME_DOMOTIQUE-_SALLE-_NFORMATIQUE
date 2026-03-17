@@ -4,15 +4,17 @@
 
 **Compilation:** ✅ 100% réussite (0 erreurs/warnings)  
 **Intégration:** ✅ Tous les systèmes connectés et synchronisés  
-**Code Status:** ✅ Prêt pour test matériel sur la planche  
+**Code Status:** ✅ Prêt pour test matériel sur la planche
 
 ---
 
 ## 📋 Modifications Apportées
 
 ### 1. **relay.cpp** - Timing du Registre HC595
+
 **Problème:** Délais trop courts (1-2µs) causaient des latchs incomplets
 **Solution appliquée:**
+
 ```cpp
 // AVANT (ne fonctionnait pas):
 digitalWrite(HC595_CLOCK_PIN, HIGH);
@@ -26,38 +28,46 @@ delayMicroseconds(20);
 digitalWrite(HC595_CLOCK_PIN, LOW);
 delayMicroseconds(10);
 ```
+
 **Impact:** Relais doivent maintenant répondre correctement aux commandes
 
 ### 2. **rfid.cpp** - Initialisation Dual Reader
 
 **Problème:** Lecteur 1 (EXIT) ne s'initialisait pas  
 **Solution appliquée:**
+
 ```cpp
 for (uint8_t reader = 0; reader < NR_OF_READERS; reader++) {
     pinMode(ssPins[reader], OUTPUT);
     digitalWrite(ssPins[reader], HIGH);  // NEW: Déselect initially
     delay(50);                            // NEW: Setup delay
-    
+
     mfrc522[reader].PCD_Init(ssPins[reader], RFID_RST_PIN);
     delay(100);                           // NEW: Post-init stabilization
 }
 delay(500);                               // NEW: Final settle time
 ```
+
 **Impact:** Les deux lecteurs RFID doivent maintenant scanner indépendamment
 
 ### 3. **motion.cpp** - Debounce Confirmé ✓
+
 Déjà correct, 5 lectures consécutives = ~250ms confirmation
 
-### 4. **logic.cpp** - Intégration Alarme ✓  
+### 4. **logic.cpp** - Intégration Alarme ✓
+
 Déjà correct:
+
 - Alarme tous les 5 secondes (cooldown)
 - Désactivée par RFID ENTRY
 - LED rouge reste ON tant qu'intrusion_detected
 
 ### 5. **button.cpp** - INPUT_PULLUP Confirmé ✓
+
 MODE (pin 4) + LAMP (pin 15) déjà bien configurés
 
 ### 6. **main.cpp** - Loop Synchronisée ✓
+
 - Motion update() appelé chaque boucle
 - Dual RFID scanReaders() pour ENTRY et EXIT
 - Button updates avant RFID processing
@@ -68,34 +78,35 @@ MODE (pin 4) + LAMP (pin 15) déjà bien configurés
 ## 🔧 Configuration Matérielle Confirmée
 
 ### Pinouts Critiques
+
 ```
 RELAY REGISTER (74HC595):
   GPIO 26 → LATCH (STCP)
   GPIO 14 → CLOCK (SHCP)
   GPIO 27 → DATA (DS)
-  
+
 RFID READERS (x2 MFRC522):
   Lecteur 0 (ENTRY):   SS = GPIO 5
   Lecteur 1 (EXIT):    SS = GPIO 17
   RST (partagé):       GPIO 16
   SPI Bus (partagé):   MOSI=23, MISO=19, CLK=18
-  
+
 PIR MOTION:
   GPIO 12 → Capteur HC-SR501
-  
+
 BUTTONS:
   GPIO 4  → MODE (long press = registration toggle)
   GPIO 15 → LAMP (short press = lamp toggle)
-  
+
 LDR:
   GPIO 35 → Light sensor (day/night detection)
-  
+
 LCD:
   I2C 0x27 (20x4 display)
-  
+
 ENERGY:
   GPIO 32/33 → PZEM-004T (9600 baud)
-  
+
 SERVO:
   GPIO 25 → Door control servo (0°=closed, 180°=open)
 ```
@@ -105,7 +116,7 @@ SERVO:
 ## ✅ Checklist de Vérification
 
 - [x] Relay.cpp timing corrigé
-- [x] RFID.cpp dual-reader init amélioré  
+- [x] RFID.cpp dual-reader init amélioré
 - [x] Motion.cpp debounce vérifié
 - [x] Logic.cpp synchronisation confirmée
 - [x] Button.cpp INPUT_PULLUP vérifié
@@ -120,32 +131,40 @@ SERVO:
 ## 🧪 Tests à Effectuer (Par Priorité)
 
 ### Test 1: Relay (FIRST - blocker pour tout le reste)
+
 ```bash
 serial → "test relay"
 ```
+
 **Attendu:** Les 8 relais s'allument/éteignent séquentiellement  
 **Si échoue:** Vérifiez timing HC595 avec oscilloscope
 
 ### Test 2: RFID Reader 0 (ENTRY)
+
 Scannez une carte.  
 **Attendu:** Message `[RFID_ENTRY] Card: XXXXXXXX`
 
 ### Test 3: RFID Reader 1 (EXIT)
+
 Scannez la même carte à l'autre lecteur.  
 **Attendu:** Message `[RFID_EXIT] Card: XXXXXXXX`
 
 ### Test 4: Motion Sensor
+
 ```bash
 serial → "test motion"
 ```
+
 Bougez près du capteur.  
 **Attendu:** Barre de "Consecutive reads" augmente jusqu'à 5, puis "MOTION EVENT DETECTED!"
 
 ### Test 5: Buttons
+
 Long press MODE (800ms) → Mode passe à REGISTRATION (LED rouge clignote)  
 Short press LAMP → Lampe intérieure toggle (ON/OFF)
 
 ### Test 6: Intrusion Alarm (Complet)
+
 1. Force system en NIGHT mode
 2. Scan RFID ENTRY (absence confirmée)
 3. Bougez capteur mouvement
@@ -186,6 +205,7 @@ BOUCLE PRINCIPALE:
 ## 🎓 Concepts Clés Intégrés
 
 ### Debounce Motor Sensor
+
 ```
 Pin = HIGH → Counter++ (jusqu'à 5)
 Pin = LOW  → Counter = 0 (réinitialise)
@@ -194,6 +214,7 @@ Cooldown 2s → Évite spam
 ```
 
 ### Relay State Structure
+
 ```cpp
 struct RelayOutputs {
     bool q0_lamp_inside;   // GPIO mapping via 74HC595 Q0
@@ -208,6 +229,7 @@ struct RelayOutputs {
 ```
 
 ### RFID Access Logic
+
 ```
 Scan ENTRY + Access Granted
   → Incrémente entries_count
@@ -215,7 +237,7 @@ Scan ENTRY + Access Granted
   → Calcule presence_count = entries - exits
   → Désactive intrusion_detected (force)
   → Ouvre servo
-  
+
 Scan EXIT + Access Granted
   → Incrémente exits_count
   → Sets card.isInside = false
@@ -227,6 +249,7 @@ Scan EXIT + Access Granted
 ## 🔐 Sauvegarde Persistante
 
 Chaque changement d'état important est sauvegardé en EEPROM:
+
 - Registre relay (bit mask 0x00-0xFF)
 - Compteurs RFID (entries, exits, presence)
 - Mode système (ACCESS vs REGISTRATION)
@@ -267,7 +290,7 @@ Chaque changement d'état important est sauvegardé en EEPROM:
 ## 🚀 Prochaines Étapes
 
 1. **Téléchargez le code** via PlatformIO
-2. **Testez Relay d'abord** (commande `test relay`) 
+2. **Testez Relay d'abord** (commande `test relay`)
 3. **Puis testez RFID** (chaque lecteur individuellement)
 4. **Puis testez Motion** (commande `test motion`)
 5. **Testez Buttons** (MODE + LAMP)
