@@ -191,3 +191,39 @@ void StorageManager::formatEEPROM() {
     
     debugLog("EEPROM formatted");
 }
+
+void StorageManager::writeString(uint16_t addr, const String& data, uint16_t maxLen) {
+    if (!initialized) return;
+    
+    // Write length first (1 byte)
+    uint8_t len = min((uint8_t)data.length(), (uint8_t)maxLen);
+    EEPROM.write(addr, len);
+    
+    // Write string data
+    for (uint8_t i = 0; i < len; i++) {
+        EEPROM.write(addr + 1 + i, data[i]);
+    }
+    
+    EEPROM.commit();
+    debugLog("String written to EEPROM at 0x%04X (len=%d)", addr, len);
+}
+
+String StorageManager::readString(uint16_t addr, uint16_t maxLen) {
+    if (!initialized) return "";
+    
+    // Read length first
+    uint8_t len = EEPROM.read(addr);
+    
+    if (len == 0 || len == 0xFF || len > maxLen) {
+        return "";
+    }
+    
+    // Read string data
+    String result = "";
+    for (uint8_t i = 0; i < len; i++) {
+        result += (char)EEPROM.read(addr + 1 + i);
+    }
+    
+    debugLog("String read from EEPROM at 0x%04X (len=%d)", addr, len);
+    return result;
+}

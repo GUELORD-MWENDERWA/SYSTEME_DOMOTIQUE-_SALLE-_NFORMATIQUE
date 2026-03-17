@@ -30,6 +30,10 @@ public:
     void saveEnergyHistory(const EnergyData data);
     void addLog(const char* logEntry);
     void formatEEPROM();
+    
+    // WiFi Config
+    void writeString(uint16_t addr, const String& data, uint16_t maxLen);
+    String readString(uint16_t addr, uint16_t maxLen);
 };
 
 #endif

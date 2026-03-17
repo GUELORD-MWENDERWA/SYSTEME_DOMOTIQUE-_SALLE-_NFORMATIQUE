@@ -10,6 +10,7 @@
 #include "energy/energy.h"
 #include <ArduinoJson.h>
 #include <SPIFFS.h>
+#include <EEPROM.h>
 
 class WebServerManager {
 private:
@@ -20,6 +21,7 @@ private:
     RelayController* relayController;
     EnergyMonitor* energyMonitor;
     StorageManager* storageManager;
+    bool isAPMode = false;
 
 public:
     WebServerManager();
@@ -35,6 +37,7 @@ public:
     
     void begin();
     void setupRoutes();
+    void setAPMode(bool apMode) { isAPMode = apMode; }
     
 private:
     // API Handlers
@@ -44,6 +47,8 @@ private:
     void handleRegisterRFID(AsyncWebServerRequest* request, uint8_t* data, size_t len);
     void handleDeleteRFID(AsyncWebServerRequest* request, String uid);
     void handleCommand(AsyncWebServerRequest* request, String cmd);
+    void handleConfigWiFi(AsyncWebServerRequest* request, uint8_t* data, size_t len);
+    void handleConfigWiFiGET(AsyncWebServerRequest* request, String ssid, String password);
     void handleNotFound(AsyncWebServerRequest* request);
 };
 

@@ -130,18 +130,71 @@ void setup() {
     systemLogic.updateDayNightStatus(globalSystemStatus.daynight);
     systemLogic.updateSystemState();
 
-    // Initialize WiFi in AP mode (Access Point)
-    Serial.println("[INIT] WiFi (Access Point)...");
-    WiFi.mode(WIFI_AP);
-    WiFi.softAP("Domotique_ESP32", "12345678");  // SSID: Domotique_ESP32, Password: 12345678
-    IPAddress apIP = WiFi.softAPIP();
-    Serial.print("[00:00:06] WiFi AP started - IP: ");
-    Serial.println(apIP);
+    // Initialize WiFi with smart mode selection
+    Serial.println("[INIT] WiFi (STA mode with AP fallback)...");
+    WiFi.mode(WIFI_STA);
+    WiFi.setAutoConnect(true);
+    WiFi.setAutoReconnect(true);
+    WiFi.setTxPower(WIFI_POWER_19_5dBm);
+    WiFi.setSleep(false);
+    
+    // Load WiFi credentials with emergency fallback
+    String wifiSSID = storageManager.readString(EEPROM_ADDR_SSID, 32);
+    String wifiPass = storageManager.readString(EEPROM_ADDR_PASSWORD, 64);
+    
+    if (wifiSSID.length() == 0 || wifiSSID == "" || wifiSSID[0] == 0xFF) {
+        wifiSSID = WIFI_DEFAULT_SSID;
+        wifiPass = WIFI_DEFAULT_PASSWORD;
+        Serial.println("[WIFI] Using hardcoded defaults");
+    }
+    
+    Serial.print("[WIFI] SSID: ");
+    Serial.println(wifiSSID);
+    
+    bool wifiConnected = false;
+    if (wifiSSID.length() > 0 && wifiSSID.length() <= 32) {
+        Serial.println("[WIFI] Connecting...");
+        WiFi.begin(wifiSSID.c_str(), wifiPass.c_str());
+        
+        uint32_t wifiStart = millis();
+        int attempts = 0;
+        while (attempts < 80) { // 80 × 100ms = 8 sec
+            if (WiFi.status() == WL_CONNECTED) {
+                wifiConnected = true;
+                break;
+            }
+            delay(100);
+            attempts++;
+            if (attempts % 10 == 0) Serial.print(".");
+        }
+        
+        if (wifiConnected) {
+            Serial.println("");
+            Serial.print("[WIFI] ✓ Connected (");
+            Serial.print(attempts * 100);
+            Serial.print("ms) - IP: ");
+            Serial.println(WiFi.localIP());
+        } else {
+            Serial.println("");
+            Serial.println("[WIFI] ✗ Connection timeout");
+        }
+    }
+    
+    // Fallback to AP if no connection
+    if (!wifiConnected) {
+        Serial.println("[WIFI] Starting AP mode...");
+        WiFi.mode(WIFI_AP);
+        WiFi.softAP("Domotique_Setup", "domotique2024");
+        Serial.print("[WIFI] AP IP: ");
+        Serial.println(WiFi.softAPIP());
+    }
+    
     delay(100);
 
     Serial.println("[INIT] Web Server (Async)...");
     webServer.init(&globalSystemStatus, &systemLogic, &rfidManager, &relayController,
                    &energyMonitor, &storageManager);
+    webServer.setAPMode(!wifiConnected); // Tell web server about AP mode
     webServer.begin();
     delay(100);
 

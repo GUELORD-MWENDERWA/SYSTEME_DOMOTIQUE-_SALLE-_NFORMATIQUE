@@ -41,7 +41,28 @@ void WebServerManager::begin() {
 }
 
 void WebServerManager::setupRoutes() {
-    // API Routes - Define BEFORE static file serving
+    // CRITICAL: REGISTER STATIC HANDLER FIRST before any server->on() routes!
+    auto staticHandler = server->serveStatic("/", SPIFFS, "/");
+    staticHandler.setDefaultFile(isAPMode ? "config.html" : "index.html");
+    staticHandler.setCacheControl("max-age=31536000"); // 1 year cache
+    
+    // THEN register API routes with /api/* prefix so they don't conflict
+    
+    // DIAGNOSTIC: GET /api/files - Debug SPIFFS contents
+    server->on("/api/files", HTTP_GET, [this](AsyncWebServerRequest* request) {
+        File root = SPIFFS.open("/");
+        String fileList = "[";
+        bool first = true;
+        File file = root.openNextFile();
+        while (file) {
+            if (!first) fileList += ",";
+            fileList += "\"" + String(file.name()) + "\"";
+            first = false;
+            file = root.openNextFile();
+        }
+        fileList += "]";
+        request->send(200, "application/json", fileList);
+    });
     
     // GET /api/system - Get system status and energy data
     server->on("/api/system", HTTP_GET, [this](AsyncWebServerRequest* request) {
@@ -98,8 +119,27 @@ void WebServerManager::setupRoutes() {
         }
     });
     
-    // Serve static files from SPIFFS (MUST be last)
-    server->serveStatic("/", SPIFFS, "/").setDefaultFile("index.html");
+    // GET /api/config/wifi - Configure WiFi via query parameters
+    server->on("/api/config/wifi", HTTP_GET, [this](AsyncWebServerRequest* request) {
+        if (request->hasParam("ssid") && request->hasParam("password")) {
+            String ssid = request->getParam("ssid")->value();
+            String password = request->getParam("password")->value();
+            handleConfigWiFiGET(request, ssid, password);
+        } else {
+            request->send(400, "application/json", "{\"error\":\"Missing ssid or password parameters\"}");
+        }
+    });
+    
+    // POST /api/config/wifi - Configure WiFi credentials (only in AP mode)
+    server->on("/api/config/wifi", HTTP_POST,
+        [this](AsyncWebServerRequest* request) {},
+        nullptr,
+        [this](AsyncWebServerRequest* request, uint8_t* data, size_t len, size_t index, size_t total) {
+            if (index == 0 && len > 0) {
+                handleConfigWiFi(request, data, len);
+            }
+        }
+    );
     
     // 404 handler
     server->onNotFound([this](AsyncWebServerRequest* request) {
@@ -113,36 +153,35 @@ void WebServerManager::handleGetSystem(AsyncWebServerRequest* request) {
         return;
     }
     
-    JsonDocument doc;
+    // Ultra-fast response - avoiding heavy JSON serialization
+    // Format: {"v":X.X,"c":X.X,"p":X,"f":X.X,"pc":X,"ec":X,"xc":X,"m":X,"d":X,"i":X,"r":[...]}
+    char buffer[512];
+    snprintf(buffer, sizeof(buffer),
+        "{\"voltage\":%.1f,\"current\":%.2f,\"power\":%.0f,\"frequency\":%.1f,"
+        "\"presence_count\":%u,\"entries_count\":%u,\"exits_count\":%u,"
+        "\"current_mode\":%u,\"daynight\":%u,\"intrusion_detected\":%s,"
+        "\"relays\":[%s,%s,%s,%s,%s,%s,%s,%s]}",
+        energyMonitor->getVoltage(),
+        energyMonitor->getCurrent(),
+        energyMonitor->getPower(),
+        energyMonitor->getFrequency(),
+        systemStatus->counters.presence_count,
+        systemStatus->counters.entries_count,
+        systemStatus->counters.exits_count,
+        systemStatus->current_mode,
+        systemStatus->daynight,
+        systemStatus->intrusion_detected ? "true" : "false",
+        systemStatus->relays.q0_lamp_inside ? "true" : "false",
+        systemStatus->relays.q1_lamp_outside ? "true" : "false",
+        systemStatus->relays.q2_prise1 ? "true" : "false",
+        systemStatus->relays.q3_prise2 ? "true" : "false",
+        systemStatus->relays.q4_fan ? "true" : "false",
+        systemStatus->relays.q5_buzzer ? "true" : "false",
+        systemStatus->relays.q6_led_red ? "true" : "false",
+        systemStatus->relays.q7_led_green ? "true" : "false"
+    );
     
-    // Energy data
-    doc["voltage"] = energyMonitor->getVoltage();
-    doc["current"] = energyMonitor->getCurrent();
-    doc["power"] = energyMonitor->getPower();
-    doc["frequency"] = energyMonitor->getFrequency();
-    
-    // System status
-    doc["presence_count"] = systemStatus->counters.presence_count;
-    doc["entries_count"] = systemStatus->counters.entries_count;
-    doc["exits_count"] = systemStatus->counters.exits_count;
-    doc["current_mode"] = systemStatus->current_mode;
-    doc["daynight"] = systemStatus->daynight;
-    doc["intrusion_detected"] = systemStatus->intrusion_detected;
-    
-    // Relays
-    JsonArray relays = doc["relays"].to<JsonArray>();
-    relays.add(systemStatus->relays.q0_lamp_inside);
-    relays.add(systemStatus->relays.q1_lamp_outside);
-    relays.add(systemStatus->relays.q2_prise1);
-    relays.add(systemStatus->relays.q3_prise2);
-    relays.add(systemStatus->relays.q4_fan);
-    relays.add(systemStatus->relays.q5_buzzer);
-    relays.add(systemStatus->relays.q6_led_red);
-    relays.add(systemStatus->relays.q7_led_green);
-    
-    String response;
-    serializeJson(doc, response);
-    request->send(200, "application/json", response);
+    request->send(200, "application/json", buffer);
 }
 
 void WebServerManager::handleToggleRelay(AsyncWebServerRequest* request, uint32_t relay) {
@@ -182,38 +221,43 @@ void WebServerManager::handleToggleRelay(AsyncWebServerRequest* request, uint32_
         storageManager->saveSystemState(systemStatus);
     }
     
-    JsonDocument doc;
-    doc["relay"] = relay;
-    doc["state"] = *relayPtr;
-    doc["name"] = relayNames[relay];
-    
-    String response;
-    serializeJson(doc, response);
-    request->send(200, "application/json", response);
+    // Ultra-fast response
+    char buffer[256];
+    snprintf(buffer, sizeof(buffer),
+        "{\"relay\":%u,\"state\":%s,\"name\":\"%s\"}",
+        relay, *relayPtr ? "true" : "false", relayNames[relay]
+    );
+    request->send(200, "application/json", buffer);
 }
 
 void WebServerManager::handleGetRFIDList(AsyncWebServerRequest* request) {
     if (rfidManager == nullptr) {
-        request->send(500, "application/json", "[]");
+        request->send(200, "application/json", "[]");
         return;
     }
-    
-    JsonDocument doc;
-    JsonArray cards = doc.to<JsonArray>();
     
     CardData* allCards = rfidManager->getAuthorizedCards();
     uint16_t count = rfidManager->getRegisteredCardsCount();
     
-    for (uint16_t i = 0; i < count; i++) {
-        JsonObject card = cards.add<JsonObject>();
-        card["uid"] = uint32ToHex(allCards[i].uid);
-        card["name"] = allCards[i].name[0] ? allCards[i].name : "No name";
-        card["authorized"] = allCards[i].authorized;
-        card["isInside"] = allCards[i].isInside;
+    // Build JSON manually for speed
+    String response = "[";
+    
+    if (count > 0 && allCards != nullptr) {
+        for (uint16_t i = 0; i < count; i++) {
+            if (i > 0) response += ",";
+            response += "{\"uid\":\"";
+            response += uint32ToHex(allCards[i].uid);
+            response += "\",\"name\":\"";
+            response += (allCards[i].name[0] ? allCards[i].name : "No name");
+            response += "\",\"authorized\":";
+            response += (allCards[i].authorized ? "true" : "false");
+            response += ",\"isInside\":";
+            response += (allCards[i].isInside ? "true" : "false");
+            response += "}";
+        }
     }
     
-    String response;
-    serializeJson(doc, response);
+    response += "]";
     request->send(200, "application/json", response);
 }
 
@@ -314,6 +358,101 @@ void WebServerManager::handleCommand(AsyncWebServerRequest* request, String cmd)
     String response;
     serializeJson(doc, response);
     request->send(200, "application/json", response);
+}
+
+void WebServerManager::handleConfigWiFi(AsyncWebServerRequest* request, uint8_t* data, size_t len) {
+    if (storageManager == nullptr) {
+        request->send(500, "application/json", "{\"error\":\"Storage not initialized\"}");
+        return;
+    }
+    
+    // Parse JSON payload
+    JsonDocument doc;
+    DeserializationError error = deserializeJson(doc, data, len);
+    
+    if (error) {
+        request->send(400, "application/json", "{\"error\":\"Invalid JSON\"}");
+        return;
+    }
+    
+    if (!doc["ssid"] || !doc["password"]) {
+        request->send(400, "application/json", "{\"error\":\"Missing ssid or password\"}");
+        return;
+    }
+    
+    String ssid = doc["ssid"].as<String>();
+    String password = doc["password"].as<String>();
+    
+    if (ssid.length() == 0 || ssid.length() > 32) {
+        request->send(400, "application/json", "{\"error\":\"Invalid SSID length\"}");
+        return;
+    }
+    
+    if (password.length() < 8 || password.length() > 64) {
+        request->send(400, "application/json", "{\"error\":\"Password must be 8-64 characters\"}");
+        return;
+    }
+    
+    // Save credentials to EEPROM
+    storageManager->writeString(EEPROM_ADDR_SSID, ssid, 32);
+    storageManager->writeString(EEPROM_ADDR_PASSWORD, password, 64);
+    
+    // Mark as valid
+    EEPROM.write(EEPROM_ADDR_WIFI_VALID, 0x01);
+    EEPROM.commit();
+    
+    Serial.println("[WIFI] Credentials saved! Rebooting...");
+    
+    JsonDocument responseDoc;
+    responseDoc["status"] = "success";
+    responseDoc["message"] = "WiFi configured. Rebooting...";
+    
+    String response;
+    serializeJson(responseDoc, response);
+    request->send(200, "application/json", response);
+    
+    // Quick reboot after saving
+    delay(500);
+    ESP.restart();
+}
+
+void WebServerManager::handleConfigWiFiGET(AsyncWebServerRequest* request, String ssid, String password) {
+    if (storageManager == nullptr) {
+        request->send(500, "application/json", "{\"error\":\"Storage not initialized\"}");
+        return;
+    }
+    
+    if (ssid.length() == 0 || ssid.length() > 32) {
+        request->send(400, "application/json", "{\"error\":\"Invalid SSID length\"}");
+        return;
+    }
+    
+    if (password.length() < 8 || password.length() > 64) {
+        request->send(400, "application/json", "{\"error\":\"Password must be 8-64 characters\"}");
+        return;
+    }
+    
+    // Save credentials to EEPROM
+    storageManager->writeString(EEPROM_ADDR_SSID, ssid, 32);
+    storageManager->writeString(EEPROM_ADDR_PASSWORD, password, 64);
+    
+    // Mark as valid
+    EEPROM.write(EEPROM_ADDR_WIFI_VALID, 0x01);
+    EEPROM.commit();
+    
+    Serial.println("[WIFI] Credentials saved! Rebooting...");
+    
+    JsonDocument responseDoc;
+    responseDoc["status"] = "success";
+    responseDoc["message"] = "WiFi configured. Rebooting...";
+    
+    String response;
+    serializeJson(responseDoc, response);
+    request->send(200, "application/json", response);
+    
+    // Quick reboot after saving
+    delay(500);
+    ESP.restart();
 }
 
 void WebServerManager::handleNotFound(AsyncWebServerRequest* request) {

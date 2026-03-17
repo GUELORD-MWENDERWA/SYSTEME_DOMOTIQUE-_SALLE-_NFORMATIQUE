@@ -1,10 +1,12 @@
 // Configuration
-const API_INTERVAL = 500; // 500ms for faster updates
+const API_INTERVAL = 250; // 250ms for ultra-fast updates
 const CHART_POINTS = 60;
+const API_TIMEOUT = 5000; // 5 second timeout for API calls
 let updateInterval = API_INTERVAL;
 
 // State
 let systemData = null;
+let rfidListData = [];
 let relayStates = [false, false, false, false, false, false, false, false];
 let chartData = {
     labels: [],
@@ -13,6 +15,10 @@ let chartData = {
     powers: []
 };
 let chart = null;
+let lastUpdateTime = 0;
+let updating = false;
+let consecutiveErrors = 0;
+let maxConsecutiveErrors = 3;
 
 // Theme Management
 function initTheme() {
@@ -69,31 +75,60 @@ function showPage(pageName) {
     }
 }
 
-// Real-time data updates
+// Real-time data updates (optimized with Promise.all for parallel requests)
 async function updateSystemData() {
+    if (updating) return; // Skip if already updating
+    updating = true;
+    
     try {
-        const response = await fetch('/api/system');
-        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        // Create timeout promise
+        const timeoutPromise = new Promise((_, reject) =>
+            setTimeout(() => reject(new Error('API timeout')), API_TIMEOUT)
+        );
         
-        systemData = await response.json();
+        // Fetch both system data and RFID list in parallel with timeout
+        const fetchPromise = Promise.all([
+            fetch('/api/system'),
+            fetch('/api/rfid/list')
+        ]);
         
-        // Update energy metrics
+        const [systemResponse, rfidResponse] = await Promise.race([fetchPromise, timeoutPromise]);
+        
+        if (!systemResponse.ok || !rfidResponse.ok) {
+            throw new Error(`API response not ok: system=${systemResponse.status}, rfid=${rfidResponse.status}`);
+        }
+        
+        // Parse responses in parallel too
+        const [newSystemData, newRFIDList] = await Promise.all([
+            systemResponse.json(),
+            rfidResponse.json()
+        ]);
+        
+        systemData = newSystemData;
+        rfidListData = newRFIDList || [];
+        consecutiveErrors = 0; // Reset error counter on success
+        
+        // Update all UI elements at once
         updateEnergy();
-        
-        // Update status
         updateStatus();
-        
-        // Update relays display
         updateRelayDisplay();
-        
-        // Update RFID list
+        updateChartData();
         updateRFIDList();
         
-        // Update chart
-        updateChartData();
+        // Log heartbeat
+        console.log(`💚 Data updated at ${new Date().toLocaleTimeString()}`);
         
     } catch (error) {
-        console.error('Data update failed:', error);
+        consecutiveErrors++;
+        console.error(`❌ Data update failed (${consecutiveErrors}/${maxConsecutiveErrors}):`, error);
+        
+        // If too many consecutive errors, show warning
+        if (consecutiveErrors >= maxConsecutiveErrors) {
+            const nowLabel = new Date().toLocaleTimeString();
+            console.warn(`⚠️ Connection lost at ${nowLabel}`);
+        }
+    } finally {
+        updating = false;
     }
 }
 
@@ -199,30 +234,25 @@ function updateChartData() {
 }
 
 async function updateRFIDList() {
-    try {
-        const response = await fetch('/api/rfid/list');
-        if (!response.ok) throw new Error(`HTTP ${response.status}`);
-        
-        const cards = await response.json();
-        const tbody = document.getElementById('rfidBody');
-        
-        if (!cards || cards.length === 0) {
-            tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;">Aucune carte enregistrée</td></tr>';
-            return;
-        }
-        
-        tbody.innerHTML = cards.map(card => `
-            <tr>
-                <td>${card.uid}</td>
-                <td>${card.name || '-'}</td>
-                <td>${card.authorized ? '✓' : '✗'}</td>
-                <td>${card.isInside ? '✓' : '✗'}</td>
-                <td><button class="btn-delete" onclick="deleteCard('${card.uid}')">Supprimer</button></td>
-            </tr>
-        `).join('');
-    } catch (error) {
-        console.error('Failed to load RFID list:', error);
+    const tbody = document.getElementById('rfidBody');
+    if (!tbody) return;
+    
+    const cards = rfidListData;
+    
+    if (!cards || cards.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;">Aucune carte enregistrée</td></tr>';
+        return;
     }
+    
+    tbody.innerHTML = cards.map(card => `
+        <tr>
+            <td>${card.uid}</td>
+            <td>${card.name || '-'}</td>
+            <td>${card.authorized ? '✓' : '✗'}</td>
+            <td>${card.isInside ? '✓' : '✗'}</td>
+            <td><button class="btn-delete" onclick="deleteCard('${card.uid}')">Supprimer</button></td>
+        </tr>
+    `).join('');
 }
 
 // Relay Control
@@ -286,17 +316,17 @@ async function registerRFIDCard(event) {
         document.getElementById('uidInput').value = '';
         document.getElementById('nameInput').value = '';
         
-        updateRFIDList();
-        alert('Carte enregistrée avec succès!');
+        alert('✅ Carte enregistrée avec succès!');
+        await updateSystemData(); // Refresh all data
         
     } catch (error) {
-        console.error('Register card failed:', error);
-        alert('Erreur: Impossible d\'enregistrer la carte');
+        console.error('❌ Register card failed:', error);
+        alert('❌ Erreur: Impossible d\'enregistrer la carte');
     }
 }
 
 async function deleteCard(uid) {
-    if (!confirm(`Supprimer la carte ${uid} ?`)) return;
+    if (!confirm(`🗑️ Supprimer la carte ${uid} ?`)) return;
     
     try {
         const response = await fetch(`/api/rfid/delete?uid=${uid}`, {
@@ -305,11 +335,12 @@ async function deleteCard(uid) {
         
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
         
-        updateRFIDList();
+        alert('✅ Carte supprimée!');
+        await updateSystemData(); // Refresh all data
         
     } catch (error) {
-        console.error('Delete card failed:', error);
-        alert('Erreur: Impossible de supprimer la carte');
+        console.error('❌ Delete card failed:', error);
+        alert('❌ Erreur: Impossible de supprimer la carte');
     }
 }
 
