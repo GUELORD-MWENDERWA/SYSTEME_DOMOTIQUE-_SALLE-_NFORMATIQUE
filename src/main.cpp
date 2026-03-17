@@ -12,6 +12,8 @@
 #include "logic/logic.h"
 #include "motion/motion.h"
 #include "signaling/signaling.h"
+#include "web/web_server.h"
+#include <WiFi.h>
 
 EnergyMonitor energyMonitor;
 RFIDManager rfidManager;
@@ -25,6 +27,7 @@ SerialCommandHandler serialHandler;
 StorageManager storageManager;
 SystemLogic systemLogic;
 PIRMotionSensor motionSensor(MOTION_SENSOR_PIN);
+WebServerManager webServer;
 
 SystemStatus globalSystemStatus = {
     .current_mode = MODE_ACCESS,
@@ -126,6 +129,21 @@ void setup() {
     // Ensure outputs match the restored state
     systemLogic.updateDayNightStatus(globalSystemStatus.daynight);
     systemLogic.updateSystemState();
+
+    // Initialize WiFi in AP mode (Access Point)
+    Serial.println("[INIT] WiFi (Access Point)...");
+    WiFi.mode(WIFI_AP);
+    WiFi.softAP("Domotique_ESP32", "12345678");  // SSID: Domotique_ESP32, Password: 12345678
+    IPAddress apIP = WiFi.softAPIP();
+    Serial.print("[00:00:06] WiFi AP started - IP: ");
+    Serial.println(apIP);
+    delay(100);
+
+    Serial.println("[INIT] Web Server (Async)...");
+    webServer.init(&globalSystemStatus, &systemLogic, &rfidManager, &relayController,
+                   &energyMonitor, &storageManager);
+    webServer.begin();
+    delay(100);
 
     Serial.println("\n[TEST] Lancement auto-test des composants...");
     delay(500);
