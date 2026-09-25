@@ -1,448 +1,128 @@
-# 🏢 SYSTÈME DOMOTIQUE - SALLE D'INFORMATIQUE
+# Computer Lab Automation System (ESP32)
 
-Système complet de domotique pour salle d'informatique basé sur ESP32 avec contrôle d'accès RFID, monitoring énergétique, éclairage intelligent et sécurité.
+An ESP32-based building automation controller for a computer lab. It combines RFID access control with occupancy counting, energy metering, daylight-aware lighting, intrusion detection and remote control through a web dashboard, a REST API and a serial console.
 
-**Plateforme:** PlatformIO avec Arduino Framework  
-**Microcontrôleur:** MHE ESP32 DevKit  
-**Langage:** C++17
+## Features
 
----
+- **Access control**: two MFRC522 readers (entry and exit), servo-driven gate, authorized badges stored in EEPROM, on-device enrollment mode
+- **Occupancy tracking**: entry and exit counters that drive lighting and security logic
+- **Energy monitoring**: voltage, current, power and cumulative energy from a PZEM-004T v3 meter
+- **Smart lighting**: indoor and outdoor lamps controlled from an LDR day/night detector with hysteresis
+- **Security**: intrusion alarm when motion is detected at night while the room is empty
+- **Load control**: 8 outputs through a 74HC595 shift register (2 lamps, 2 sockets, fan, buzzer, red and green LEDs)
+- **Interfaces**: 16x2 LCD status screen, web dashboard served from SPIFFS, REST API, serial command console
+- **Connectivity**: station mode with credentials stored in EEPROM, automatic reconnection, and a fallback configuration access point
 
-## 📋 Table des matières
-
-1. [Caractéristiques](#-caractéristiques)
-2. [Architecture Matérielle](#-architecture-matérielle)
-3. [Installation](#-installation)
-4. [Commandes Série](#-commandes-série)
-5. [Scénarios](#-scénarios)
-6. [Dépannage](#-dépannage)
-
----
-
-## ✨ Caractéristiques
-
-### ✅ Fonctionnalités principales
-
-- **Monitoring énergétique** : Lecture temps réel PZEM-004T (tension, courant, puissance, énergie)
-- **Contrôle d'accès RFID** : 2 lecteurs RC522 (entrée/sortie) avec gestion des badges
-- **Éclairage intelligent** : Lampes intérieure/extérieure avec logique jour/nuit
-- **Sécurité** : Détection d'intrusion (nuit + absence)
-- **Servo moteur** : Ouverture/fermeture portail (0° - 180°)
-- **Relais contrôlés** : 74HC595 (8 sorties : lampes, prises, ventilo, buzzeur, LEDs)
-- **Affichage LCD** : Écran 16x2 avec diagnostic temps réel
-- **Interface série** : Console de commande complète (115200 bps)
-- **Stockage EEPROM** : Persistence des données critiques
-
----
-
-## 🔌 Architecture Matérielle
-
-### Microcontrôleur
+## System overview
 
 ```
-ESP32 MHE DevKit v1
-├─ CPU: Xtensa Dual-Core 32-bit @ 240 MHz
-├─ RAM: 520 KB SRAM
-├─ Flash: 4 MB
-└─ Tension: 3.3V / 5V USB
+            ┌──────────────┐     ┌────────────────┐
+ RC522 x2 ──┤              │     │  74HC595       │── lamps, sockets, fan,
+ PZEM-004T ─┤    ESP32     ├─────┤  shift register│   buzzer, LEDs
+ LDR, PIR ──┤  (FreeRTOS,  │     └────────────────┘
+ Buttons  ──┤  Arduino)    ├── Servo (gate)
+            │              ├── LCD 16x2 (I2C)
+            └──────┬───────┘
+                   │ Wi-Fi
+         Web dashboard  /  REST API  /  Serial console
 ```
 
-### Connexions Principales
+## Hardware
 
-```
-PZEM-004T (Énergie)
-├─ RX: GPIO 32
-├─ TX: GPIO 33
-└─ Baudrate: 9600 bps (UART2)
+Pin assignments are centralized in [`src/config.h`](src/config.h):
 
-RFID RC522 x2 (SPI)
-├─ SS1 (Entrée): GPIO 5
-├─ SS2 (Sortie): GPIO 17
-├─ CLK: GPIO 18
-├─ MISO: GPIO 19
-├─ MOSI: GPIO 23
-└─ Frequency: 1 MHz
+| Peripheral | Pins |
+| --- | --- |
+| PZEM-004T (UART2, 9600 baud) | RX 32, TX 33 |
+| RFID RC522 x2 (SPI) | CLK 18, MISO 19, MOSI 23, RST 16, SS 17 and 5 |
+| 74HC595 | LATCH 27, CLOCK 14, DATA 13 |
+| Gate servo | 25 |
+| LCD 16x2 I2C (`0x27`) | SDA 21, SCL 22 |
+| Mode button (long press) / lamp button | 4 / 15 |
+| LDR | 35 (ADC) |
+| PIR motion sensor | 12 |
 
-74HC595 Registre à Décalage
-├─ LATCH: GPIO 26
-├─ CLOCK: GPIO 14
-└─ DATA: GPIO 27
+## Software architecture
 
-Servo SG90
-└─ PWM: GPIO 25
+Each subsystem is an independent module under `src/`:
 
-LCD I2C 16x2
-├─ SDA: GPIO 21
-├─ SCL: GPIO 22
-└─ Address: 0x27
+| Module | Responsibility |
+| --- | --- |
+| `energy` | PZEM-004T polling and reporting |
+| `rfid` | Dual-reader management, badge registry |
+| `relay` | 74HC595 output driver |
+| `servo` | Gate control |
+| `ldr`, `motion` | Environmental sensing with debouncing |
+| `logic` | Scenario engine (day/night, occupancy, intrusion) |
+| `signaling` | Buzzer and LED patterns |
+| `lcd` | Status display |
+| `storage` | EEPROM persistence (badges, Wi-Fi) |
+| `serial_cmd` | Serial console |
+| `web` | Async HTTP server and REST API |
 
-Boutons
-├─ MODE: GPIO 4 (appui long)
-└─ LAMPE: GPIO 15 (appui court)
+## REST API
 
-LDR (Luminosité)
-└─ ADC: GPIO 35
-```
+| Method | Path | Description |
+| --- | --- | --- |
+| `GET` | `/api/system` | System state and energy readings |
+| `POST` | `/api/relay?id=<n>` | Toggle an output |
+| `GET` | `/api/rfid/list` | Authorized badges |
+| `POST` | `/api/rfid/register` | Register a badge |
+| `POST` | `/api/rfid/delete?uid=<uid>` | Remove a badge |
+| `POST` | `/api/cmd?cmd=<ZERO\|RESET\|RELAY\|REBOOT>` | System commands |
+| `GET` / `POST` | `/api/config/wifi` | Read or update Wi-Fi settings |
+| `GET` | `/api/files` | SPIFFS listing (diagnostics) |
 
-### Sorties Relais 74HC595
+Full details and examples: [API_ENDPOINTS.md](API_ENDPOINTS.md).
 
-| Bit | Q   | Fonction         | Tension | Courant |
-| --- | --- | ---------------- | ------- | ------- |
-| 0   | Q0  | Lampe intérieure | 5V/12V  | 10A     |
-| 1   | Q1  | Lampe extérieure | 5V/12V  | 10A     |
-| 2   | Q2  | Prise 1          | 5V/12V  | 10A     |
-| 3   | Q3  | Prise 2          | 5V/12V  | 10A     |
-| 4   | Q4  | Ventilateur      | 5V/12V  | 10A     |
-| 5   | Q5  | Buzzeur          | 5V      | 100mA   |
-| 6   | Q6  | LED Rouge        | 5V      | 20mA    |
-| 7   | Q7  | LED Verte        | 5V      | 20mA    |
+## Serial console
 
----
+115200 baud. Main commands:
 
-## 🚀 Installation
+| Group | Commands |
+| --- | --- |
+| Energy | `E` (live readings), `ER` (report) |
+| RFID | `RLIST`, `RMODE`, `RREG`, `RACC`, `RDEL`, `RNAME`, `REDIT` |
+| Outputs | `L0 1/0`, `L1 1/0`, `P1 1/0`, `P2 1/0`, `F 1/0` |
+| Diagnostics | `D` (state), `T` (self-test), `C` (occupancy counters) |
+| System | `INFO`, `HELP`, `REBOOT` |
 
-### 1. Prérequis
+## Operating scenarios
+
+| Condition | Behaviour |
+| --- | --- |
+| Authorized badge at entry | Gate opens for 3 s, green LED, short beep, occupancy +1, indoor light on |
+| Unknown badge | Gate stays closed, red LED for 3 s, two short beeps |
+| Last person leaves | Occupancy reaches 0, indoor light off |
+| Night, room empty, motion detected | Intrusion alarm: outdoor light on, red LED, repeated long beeps |
+| Mode button held for 2 s | Badge enrollment mode |
+
+## Getting started
 
 ```bash
-# Installer PlatformIO
-pip install platformio
-
-# OU via IDE VS Code (extension PlatformIO)
+pio run -t upload        # firmware
+pio run -t uploadfs      # web dashboard (SPIFFS)
+pio device monitor       # serial console, 115200 baud
 ```
 
-### 2. Cloner/Créer le projet
+On first boot the controller tries the Wi-Fi credentials stored in EEPROM (or the defaults in `config.h`). If it cannot connect, it starts the `Domotique_Setup` access point; browse to `http://192.168.4.1/config.html` to configure the network.
 
-```bash
-mkdir domotique_salle_info
-cd domotique_salle_info
-platformio init -d . -b mhetesp32devkit
-```
+Change the default Wi-Fi and access point passwords before deploying the system.
 
-### 3. Copier les fichiers
+## Documentation
 
-- Copier `platformio.ini` à la racine
-- Créer structure `src/` avec tous les fichiers `.h` et `.cpp`
+| Document | Content |
+| --- | --- |
+| [API_ENDPOINTS.md](API_ENDPOINTS.md) | REST API reference |
+| [GUIDE_DEBUG_HARDWARE.md](GUIDE_DEBUG_HARDWARE.md) | Hardware troubleshooting |
+| [CHECKLIST_VALIDATION.md](CHECKLIST_VALIDATION.md) | Acceptance test checklist |
+| [AMELIORATIONS.md](AMELIORATIONS.md) | Planned improvements |
+| [SUMMARY_FIXES.md](SUMMARY_FIXES.md), [CORRECTIONS_SIGNALING.md](CORRECTIONS_SIGNALING.md) | Change log of fixes |
 
-### 4. Compiler et uploader
+## Safety
 
-```bash
-# Compiler
-platformio run
+Mains-powered loads must be switched through properly rated relays, fused, and installed in an enclosure by a qualified electrician.
 
-# Uploader sur ESP32
-platformio run -t upload
+## License
 
-# Monitorer la sortie série
-platformio device monitor --baud 115200
-```
-
----
-
-## 📡 Commandes Série
-
-**Format:** `COMMANDE [PARAMÈTRE]`  
-**Baudrate:** 115200 bps
-
-### 📊 Commandes ÉNERGIE
-
-```
-E
-  → Affiche mesures PZEM actuelles (V, A, W, kWh)
-
-ER
-  → Rapport énergétique détaillé
-```
-
-### 🔑 Commandes RFID
-
-```
-RLIST
-  → Liste toutes les cartes autorisées
-
-RMODE
-  → Affiche mode actuel (ACCESS/REGISTRATION)
-
-RREG
-  → Passe en mode enregistrement
-
-RACC
-  → Passe en mode accès
-```
-
-### 💡 Commandes RELAIS
-
-```
-L0 1/0       → Lampe intérieure (1=ON, 0=OFF)
-L1 1/0       → Lampe extérieure (1=ON, 0=OFF)
-P1 1/0       → Prise 1 (1=ON, 0=OFF)
-P2 1/0       → Prise 2 (1=ON, 0=OFF)
-F 1/0        → Ventilateur (1=ON, 0=OFF)
-```
-
-### 🔧 Commandes DIAGNOSTIC
-
-```
-D
-  → État système complet
-  → Affiche: mode, jour/nuit, présence, LDR, intrusion
-
-T
-  → Test auto tous composants
-  → Vérifie: PZEM, RFID, Relais, Servo, LDR, LCD
-
-C
-  → Affiche compteurs présence (Entrées/Sorties)
-```
-
-### ℹ️ Commandes SYSTÈME
-
-```
-INFO
-  → Infos système (version, uptime, etc.)
-
-HELP
-  → Affiche ce menu
-
-REBOOT
-  → Redémarrage ESP32
-```
-
----
-
-## 📍 Scénarios
-
-### Scénario 1️⃣ - Jour - Quelqu'un à l'entrée
-
-```
-1. Badge RFID scanné à l'entrée
-   ↓
-2. Vérification base de données
-   ├─ ✓ Autorisé:
-   │  ├─ Servo: 0° → 180° (porte ouvre)
-   │  ├─ LED verte: ON
-   │  ├─ Buzzeur: 1 bip court
-   │  └─ Après 3s: Servo → 0° (porte ferme)
-   │
-   └─ ✗ Refusé:
-      ├─ Servo: reste fermé
-      ├─ LED rouge: ON 3s
-      └─ Buzzeur: 2 bips courts
-
-3. Compteur présence augmente
-   ↓
-4. Lampe intérieure s'allume
-```
-
-### Scénario 2️⃣ - Jour - Fin de journée (sortie)
-
-```
-1. Badge RFID scanné à la sortie
-   ↓
-2. Compteur présence diminue
-   ↓
-3. SI Compteur = 0 (salle vide):
-   ├─ Lampe intérieure: OFF
-   └─ Servo: reste fermé
-```
-
-### Scénario 3️⃣ - Nuit - Absence + Intrusion?
-
-```
-1. LDR détecte nuit (obscurité)
-   ↓
-2. Compteur présence = 0 (salle vide)
-   ↓
-3. 🚨 ALERTE INTRUSION!
-   ├─ Lampe extérieure: ON
-   ├─ Lampe intérieure: OFF
-   ├─ LED rouge: ON continu
-   ├─ Buzzeur: 3 bips longs répétés
-   └─ Serial: Log détaillé
-
-Résolution:
-└─ Commande manuelle pour reset (nécessite admin)
-```
-
-### Scénario 4️⃣ - Mode Enregistrement Carte
-
-```
-1. Appui long (>2s) bouton GPIO4
-   ↓
-2. LED rouge clignote (indication enregistrement)
-   ↓
-3. Scannez une nouvelle carte
-   ↓
-4. Carte enregistrée automatiquement
-   ├─ UID stocké en EEPROM
-   └─ LED verte clignote (confirmation)
-
-5. Revenir à mode accès
-```
-
----
-
-## 📁 Structure du Projet
-
-```
-domotique_salle_info/
-├── platformio.ini              # Configuration PlatformIO
-├── src/
-│   ├── main.cpp               # Point d'entrée principal
-│   ├── config.h               # Configuration centralisée
-│   │
-│   ├── energy/
-│   │   ├── energy.h           # Interface PZEM
-│   │   └── energy.cpp         # Implémentation
-│   │
-│   ├── rfid/
-│   │   ├── rfid.h             # Interface RFID
-│   │   └── rfid.cpp           # Implémentation
-│   │
-│   ├── relay/
-│   │   ├── relay.h            # Interface 74HC595
-│   │   └── relay.cpp          # Implémentation
-│   │
-│   ├── servo/
-│   │   ├── servo.h            # Interface Servo
-│   │   └── servo.cpp          # Implémentation
-│   │
-│   ├── button/
-│   │   ├── button.h           # Interface Boutons
-│   │   └── button.cpp         # Implémentation
-│   │
-│   ├── ldr/
-│   │   ├── ldr.h              # Interface LDR
-│   │   └── ldr.cpp            # Implémentation
-│   │
-│   ├── lcd/
-│   │   ├── lcd.h              # Interface LCD I2C
-│   │   └── lcd.cpp            # Implémentation
-│   │
-│   ├── serial_cmd/
-│   │   ├── serial_cmd.h       # Interface Commandes
-│   │   └── serial_cmd.cpp     # Parser + Handlers
-│   │
-│   ├── storage/
-│   │   ├── storage.h          # Interface EEPROM
-│   │   └── storage.cpp        # Gestion stockage
-│   │
-│   └── logic/
-│       ├── logic.h            # Interface Logique
-│       └── logic.cpp          # Orchestration système
-│
-├── lib/                       # Librairies (auto-générées)
-├── .gitignore
-├── README.md
-└── .pio/                     # Build (auto-généré)
-```
-
----
-
-## 🔧 Dépannage
-
-### ❌ Erreur: "PZEM ne répond pas"
-
-```
-Vérifier:
-✓ Pins RX (GPIO32) / TX (GPIO33) corrects
-✓ Baudrate 9600 configuré
-✓ Connexion GND commune
-✓ Câblage inversé? (RX ↔ TX)
-```
-
-### ❌ Erreur: "RFID ne scan pas"
-
-```
-Vérifier:
-✓ Pins SPI corrects (CLK, MISO, MOSI)
-✓ SS pins (GPIO5 et GPIO17) distincts
-✓ Fréquence SPI = 1 MHz
-✓ Cartes RC522 compatibles
-```
-
-### ❌ Erreur: "LCD ne s'affiche pas"
-
-```
-Vérifier:
-✓ Adresse I2C: 0x27 ou 0x3F (tester les deux)
-✓ Pins SDA (GPIO21) / SCL (GPIO22)
-✓ Contrast potentiometer du LCD
-✓ Backlight power (5V)
-```
-
-### ❌ Erreur: "Relais ne basculent pas"
-
-```
-Vérifier:
-✓ Pins 74HC595: LATCH(26), CLOCK(14), DATA(27)
-✓ Tension 5V sur module relais
-✓ GND commun ESP32/Relais
-✓ Type 74HC595 authentique (pas 74LS595)
-```
-
-### ⚠️ Avertissement: "Compilation lente"
-
-```
-Solution:
-platformio run --target clean
-platformio run
-```
-
----
-
-## 📊 Limitations & Considérations
-
-| Aspect        | Limitation            | Note                       |
-| ------------- | --------------------- | -------------------------- |
-| Cartes RFID   | 50 max en EEPROM      | Extensible en NVS          |
-| Historique    | 100 logs max          | Circularaire (overwrite)   |
-| Affichage LCD | 2 lignes 16 chars     | Rafraîchissement 1s        |
-| Servo         | 2 positions (0°/180°) | Facilement paramétrable    |
-| PZEM          | Max 100A              | Version adaptée: 200A/300A |
-| LDR           | Calibration manuelle  | Seuil: ~1500 ADC           |
-
----
-
-## 🚀 Évolutions Futures
-
-- [ ] WiFi & Web Dashboard
-- [ ] Application mobile
-- [ ] Cloud synchronisation
-- [ ] Capteurs T°/Humidité
-- [ ] Détection fumée/CO2
-- [ ] Caméra IP
-- [ ] Machine Learning détection anomalies
-
----
-
-## 📝 Licence
-
-MIT License - Libre d'utilisation et de modification
-
----
-
-## 👤 Auteur
-
-Projet domotique - 2024-2025
-
-**Version:** 1.0.0  
-**Dernière mise à jour:** 2024-01-15
-
----
-
-## 📞 Support
-
-Pour problèmes ou questions:
-
-1. Vérifier la section [Dépannage](#-dépannage)
-2. Consulter les logs série (115200 bps)
-3. Exécuter la commande `T` (auto-test)
-
----
-
-## 📚 Références Utiles
-
-- [Fiche PZEM-004T](https://github.com/mandulaj/PZEM-004T-v30)
-- [Datasheet RC522](https://datasheetspdf.com/pdf/MFRC522)
-- [ESP32 Documentation](https://docs.espressif.com/)
-- [PlatformIO Guide](https://docs.platformio.org/)
+No license has been specified yet. Contact the author before reusing this code.
