@@ -125,4 +125,4 @@ Mains-powered loads must be switched through properly rated relays, fused, and i
 
 ## License
 
-No license has been specified yet. Contact the author before reusing this code.
+MIT. See [LICENSE](LICENSE).
